@@ -184,6 +184,7 @@ export function extractEvidenceFacts(events: readonly RunnerEvent[]): Readonly<R
       ok?: unknown;
       data?: unknown;
       error?: { code?: unknown; message?: unknown; retryable?: unknown };
+      idempotency?: { key?: unknown; committed?: unknown; replayed?: unknown };
     } | undefined;
     if (!result || typeof result.evidenceId !== "string") return [];
     return [[result.evidenceId, evidenceFactsFor(String(payload.name), payload.input, result)]];
@@ -193,7 +194,12 @@ export function extractEvidenceFacts(events: readonly RunnerEvent[]): Readonly<R
 function evidenceFactsFor(
   tool: string,
   input: unknown,
-  result: { ok?: unknown; data?: unknown; error?: { code?: unknown; message?: unknown; retryable?: unknown } },
+  result: {
+    ok?: unknown;
+    data?: unknown;
+    error?: { code?: unknown; message?: unknown; retryable?: unknown };
+    idempotency?: { key?: unknown; committed?: unknown; replayed?: unknown };
+  },
 ): readonly string[] {
   const inputFacts = flattenFacts(input, "query");
   if (result.ok !== true) {
@@ -207,7 +213,7 @@ function evidenceFactsFor(
     const documentId = getStringPath(input, "documentId");
     return [
       `tool ${tool} returned no result`,
-      "result exists false",
+      "result found false",
       "result empty true",
       ...(tool === "get_document" && documentId
         ? [`document ${documentId} not found in available records`, `no document found for ${documentId}`]
@@ -229,18 +235,59 @@ function evidenceFactsFor(
     return [
       ...(tool === "search_documents" ? ["documents found"] : []),
       ...(tool === "list_payments" ? ["payments found"] : []),
+      ...(tool === "list_payments" ? paymentStatusFacts(result.data) : []),
       ...countFacts,
       ...inputFacts,
       ...flattenFacts(result.data),
     ];
   }
   const documentId = getStringPath(input, "documentId");
+  const paymentId = getStringPath(input, "paymentId");
+  const idempotencyKey = getStringPath(input, "idempotencyKey");
+  const resultDocumentId = getStringPath(result.data, "documentId");
+  const resultPaymentId = getStringPath(result.data, "paymentId");
+  const supplierRfc = getStringPath(input, "supplierRfc");
+  const resultSupplierRfc = getStringPath(result.data, "supplierRfc");
+  const reason = getStringPath(input, "reason");
+  const resultReason = getStringPath(result.data, "reason");
+  const resultIdempotencyKey = typeof result.idempotency?.key === "string" ? result.idempotency.key : null;
+  const committed = result.idempotency?.committed;
+  const replayed = result.idempotency?.replayed;
+  const validMatch = tool === "match_payment" && committed === true
+    && paymentId !== null && documentId !== null && idempotencyKey !== null
+    && resultPaymentId === paymentId && resultDocumentId === documentId
+    && resultIdempotencyKey === idempotencyKey;
+  const validFollowUp = tool === "create_follow_up" && committed === true
+    && supplierRfc !== null && idempotencyKey !== null && reason !== null && reason.length > 0
+    && resultSupplierRfc === supplierRfc && resultIdempotencyKey === idempotencyKey
+    && resultReason === reason;
   return [
     `tool ${tool} succeeded`,
     ...(tool === "get_document" && documentId ? [`document ${documentId} found`] : []),
+    ...(validMatch
+      ? [`payment ${paymentId} matched to document ${documentId}`]
+      : []),
+    ...(validMatch ? ["match committed true"] : []),
+    ...(validMatch && typeof replayed === "boolean" ? [`match replayed ${replayed}`, ...(replayed ? [] : ["match not replayed"])] : []),
+    ...(validFollowUp ? ["follow-up committed true"] : []),
+    ...(validFollowUp && typeof replayed === "boolean" ? [`follow-up replayed ${replayed}`] : []),
     ...inputFacts,
     ...flattenFacts(result.data),
   ];
+}
+
+function paymentStatusFacts(items: readonly unknown[]): readonly string[] {
+  return items.flatMap((item) => {
+    if (item === null || typeof item !== "object") return [];
+    const payment = item as Record<string, unknown>;
+    if (typeof payment.id !== "string") return [];
+    if (payment.matchedDocumentId === null) {
+      return [`payment ${payment.id} unmatched`, `payment ${payment.id} previously unmatched`];
+    }
+    return typeof payment.matchedDocumentId === "string"
+      ? [`payment ${payment.id} matched to document ${payment.matchedDocumentId}`]
+      : [];
+  });
 }
 
 function getStringPath(value: unknown, path: string): string | null {

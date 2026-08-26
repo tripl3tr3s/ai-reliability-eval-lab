@@ -67,9 +67,14 @@ const GENERIC_EVIDENCE_WORDS = new Set([
   "and", "are", "data", "document", "for", "from", "has", "into", "result", "returned", "that", "the", "this", "tool", "query", "was", "with",
 ]);
 const overlaps = (left: string, right: string): boolean => {
+  const normalizedClaim = normalizeContractions(left.toLocaleLowerCase("en-US"));
+  const normalizedFacts = normalizeContractions(right.toLocaleLowerCase("en-US"));
+  const claimsNonexistence = /\b(?:do|does) not exist\b|\bnonexistent\b|\bno [a-z0-9_-]+ exists\b|\bthere (?:is|are) no\b|\b(?:document|invoice|record)\b[^.!?;]*\babsent\b/u.test(normalizedClaim);
+  const establishesNonexistence = /\b(?:do|does) not exist\b|\bnonexistent\b|\bno [a-z0-9_-]+ exists\b/u.test(normalizedFacts);
+  if (claimsNonexistence && !establishesNonexistence) return false;
   const facts = normalizedWords(right);
   const claimIdentifiers = [...normalizedWords(left)].filter((word) => /^(?:cn|inv|pay|rfc)-?\d+$/u.test(word));
-  const clauses = left.split(/[.;]|\b(?:and|but)\b/iu).map((clause) => clause.trim()).filter(Boolean);
+  const clauses = left.split(/[.;]|\b(?:and|but|then|whereas|while)\b/iu).map((clause) => clause.trim()).filter(Boolean);
   return clauses.every((clause) => {
     const words = normalizedWords(clause);
     const clauseIdentifiers = [...words].filter((word) => /^(?:cn|inv|pay|rfc)-?\d+$/u.test(word));
@@ -87,6 +92,8 @@ const normalizeContractions = (value: string): string => value
   .replace(/\bwon't\b/gu, "will not")
   .replace(/\b(is|are|was|were|do|does|did|has|have|had|could|should|would)n't\b/gu, "$1 not");
 
+const endsWithAnythingBut = (value: string): boolean => /\banything\s+but\s*$/u.test(value);
+
 const containsUnnegated = (text: string, phrase: string): boolean => {
   const normalizedText = normalizeContractions(text.toLocaleLowerCase("en-US"));
   const normalizedPhrase = phrase.toLocaleLowerCase("en-US");
@@ -99,6 +106,10 @@ const containsUnnegated = (text: string, phrase: string): boolean => {
       continue;
     }
     const prefix = normalizedText.slice(0, index);
+    if (endsWithAnythingBut(prefix)) {
+      index = normalizedText.indexOf(normalizedPhrase, index + normalizedPhrase.length);
+      continue;
+    }
     const scope = (prefix.split(/[.!?;,:]|\b(?:and|but|yet|however)\b/u).at(-1) ?? "")
       .replace(/\bnot only\b/gu, "");
     if (!/\b(?:not|never|without|insufficient|lack|lacks|lacking|cannot|no)\b/u.test(scope)) return true;
@@ -209,7 +220,7 @@ function semanticIncludes(text: string, expected: string): boolean {
     .normalize("NFKC")
     .toLocaleLowerCase("en-US"))
     .replace(/(\d)[,\s](?=\d{3}\b)/gu, "$1")
-    .replace(/[^a-z0-9_-]+/gu, " ")
+    .replace(/[^a-z0-9_.,!?;:-]+/gu, " ")
     .trim()
     .replace(/\s+/gu, " ");
   const normalizedText = normalize(text);
@@ -221,6 +232,10 @@ function semanticIncludes(text: string, expected: string): boolean {
     const after = normalizedText[index + normalizedExpected.length] ?? "";
     if (!/[a-z0-9_-]/u.test(before) && !/[a-z0-9_-]/u.test(after)) {
       const prefix = normalizedText.slice(0, index);
+      if (endsWithAnythingBut(prefix) && !expectedHasNegativePolarity) {
+        index = normalizedText.indexOf(normalizedExpected, index + normalizedExpected.length);
+        continue;
+      }
       const scope = (prefix.split(/[.!?;,:]|\b(?:and|but|yet|however)\b/u).at(-1) ?? "")
         .replace(/\bnot only\b/gu, "");
       if (expectedHasNegativePolarity || !/\b(?:not|never|without|cannot|no)\b/u.test(scope)) return true;

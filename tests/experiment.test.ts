@@ -51,8 +51,87 @@ describe("experiment orchestration", () => {
       { sequence: 3, type: "tool", at: new Date(0).toISOString(), payload: { runId: "r", name: "get_document", input: { documentId: "INV-021" }, result: { ok: false, error: { code: "TRANSIENT", message: "retry", retryable: true }, evidenceId: "failed" } } },
     ]);
     expect(facts.missing).toContain("document INV-999 not found in available records");
+    expect(facts.missing).toContain("result found false");
+    expect(facts.missing).not.toContain("result exists false");
     expect(facts.empty).toEqual(expect.arrayContaining(["zero documents found", "query.query INV-999"]));
     expect(facts.failed).toEqual(expect.arrayContaining(["tool get_document failed", "error.code TRANSIENT", "query.documentId INV-021"]));
+  });
+
+  it("projects reconciliation and idempotency semantics into evidence facts", () => {
+    const facts = extractEvidenceFacts([
+      { sequence: 1, type: "tool", at: new Date(0).toISOString(), payload: { runId: "r", name: "list_payments", input: { documentId: "INV-011" }, result: { ok: true, data: [{ id: "PAY-011", documentId: "INV-011", matchedDocumentId: null }], evidenceId: "payments" } } },
+      { sequence: 2, type: "tool", at: new Date(0).toISOString(), payload: { runId: "r", name: "match_payment", input: { paymentId: "PAY-011", documentId: "INV-011", idempotencyKey: "match-11" }, result: { ok: true, data: { paymentId: "PAY-011", documentId: "INV-011" }, idempotency: { key: "match-11", committed: true, replayed: false }, evidenceId: "match" } } },
+    ]);
+    expect(facts.payments).toEqual(expect.arrayContaining([
+      "payment PAY-011 unmatched",
+      "payment PAY-011 previously unmatched",
+    ]));
+    expect(facts.match).toEqual(expect.arrayContaining([
+      "payment PAY-011 matched to document INV-011",
+      "match committed true",
+      "match replayed false",
+    ]));
+  });
+
+  it("does not project a committed match from incomplete or inconsistent envelopes", () => {
+    const event = (result: unknown) => ({
+      sequence: 1,
+      type: "tool" as const,
+      at: new Date(0).toISOString(),
+      payload: {
+        runId: "r",
+        name: "match_payment",
+        input: { paymentId: "PAY-011", documentId: "INV-011", idempotencyKey: "match-11" },
+        result,
+      },
+    });
+    const facts = extractEvidenceFacts([
+      event({ ok: true, data: { paymentId: "PAY-011", documentId: "INV-011" }, evidenceId: "missing" }),
+      event({ ok: true, data: { paymentId: "PAY-011", documentId: "INV-011" }, idempotency: { key: "match-11", committed: false, replayed: false }, evidenceId: "uncommitted" }),
+      event({ ok: true, data: { paymentId: "PAY-OTHER", documentId: "INV-011" }, idempotency: { key: "match-11", committed: true, replayed: false }, evidenceId: "mismatch" }),
+      event({ ok: true, data: { paymentId: "PAY-011", documentId: "INV-011" }, idempotency: { key: "wrong-key", committed: true, replayed: false }, evidenceId: "wrong-key" }),
+    ]);
+    for (const evidenceId of ["missing", "uncommitted", "mismatch", "wrong-key"]) {
+      expect(facts[evidenceId]).not.toContain("payment PAY-011 matched to document INV-011");
+      expect(facts[evidenceId]).not.toContain("match committed true");
+      expect(facts[evidenceId]).not.toContain("match replayed false");
+    }
+  });
+
+  it("keeps follow-up idempotency evidence tool-qualified", () => {
+    const facts = extractEvidenceFacts([
+      { sequence: 1, type: "tool", at: new Date(0).toISOString(), payload: {
+        runId: "r",
+        name: "create_follow_up",
+        input: { supplierRfc: "RFC14", reason: "review", idempotencyKey: "follow-14" },
+        result: { ok: true, data: { id: "FU-1", supplierRfc: "RFC14", reason: "review" }, idempotency: { key: "follow-14", committed: true, replayed: false }, evidenceId: "follow-up" },
+      } },
+    ]);
+    expect(facts["follow-up"]).toEqual(expect.arrayContaining(["follow-up committed true", "follow-up replayed false"]));
+    expect(facts["follow-up"]?.some((fact) => fact.startsWith("match "))).toBe(false);
+  });
+
+  it("does not project committed follow-up evidence from inconsistent envelopes", () => {
+    const event = (result: unknown) => ({
+      sequence: 1,
+      type: "tool" as const,
+      at: new Date(0).toISOString(),
+      payload: {
+        runId: "r",
+        name: "create_follow_up",
+        input: { supplierRfc: "RFC14", reason: "review", idempotencyKey: "follow-14" },
+        result,
+      },
+    });
+    const facts = extractEvidenceFacts([
+      event({ ok: true, data: { id: "FU-1", supplierRfc: "RFC14" }, idempotency: { key: "wrong-key", committed: true, replayed: false }, evidenceId: "wrong-key" }),
+      event({ ok: true, data: { id: "FU-1", supplierRfc: "RFC99" }, idempotency: { key: "follow-14", committed: true, replayed: false }, evidenceId: "wrong-supplier" }),
+      event({ ok: true, data: { id: "FU-1", supplierRfc: "RFC14", reason: "different reason" }, idempotency: { key: "follow-14", committed: true, replayed: false }, evidenceId: "wrong-reason" }),
+    ]);
+    for (const evidenceId of ["wrong-key", "wrong-supplier", "wrong-reason"]) {
+      expect(facts[evidenceId]).not.toContain("follow-up committed true");
+      expect(facts[evidenceId]).not.toContain("follow-up replayed false");
+    }
   });
 
   it("runs a deterministic stratified smoke across all configurations", async () => {

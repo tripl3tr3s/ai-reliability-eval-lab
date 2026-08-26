@@ -50,6 +50,27 @@ describe("scoring", () => {
     )).toEqual({ unsupported: 1, checkable: 1 });
   });
 
+  it("does not turn a not-found lookup into proof of nonexistence", () => {
+    const facts = { missing: ["document INV-999 not found in available records", "result found false"] };
+    expect(scoreUnsupportedClaims(
+      [
+        { text: "INV-999 was not found in the available records", evidenceIds: ["missing"] },
+        { text: "INV-999 does not exist in the available records", evidenceIds: ["missing"] },
+        { text: "There is no document INV-999 in the available records", evidenceIds: ["missing"] },
+      ],
+      ["missing"],
+      facts,
+    )).toEqual({ unsupported: 2, checkable: 3 });
+  });
+
+  it("requires evidence for each transition-separated payment claim", () => {
+    expect(scoreUnsupportedClaims(
+      [{ text: "PAY-011 was previously unmatched, then successfully matched", evidenceIds: ["payments"] }],
+      ["payments"],
+      { payments: ["payment PAY-011 previously unmatched"] },
+    )).toEqual({ unsupported: 1, checkable: 1 });
+  });
+
   it("does not treat an explicitly negated forbidden phrase as the forbidden claim", async () => {
     const datasetCase = (await loadDataset()).cases.find(({ id }) => id === "v1-multi-policy-13")!;
     const run: RawRun = {
@@ -217,6 +238,30 @@ describe("scoring", () => {
     expect(scoreRun({ ...base, toolCalls: [...base.toolCalls.slice(0, 3), { name: "check_supplier_status", input: { rfc: "RFC11" } }, base.toolCalls[3]!] }, datasetCase).selectionPassed).toBe(false);
   });
 
+  it("resets required-assertion negation at sentence boundaries", async () => {
+    const dataset = await loadDataset(new URL("../datasets/v2/manifest.json", import.meta.url).pathname);
+    const datasetCase = dataset.cases.find(({ id }) => id === "v2-multi-match-11")!;
+    const run: RawRun = {
+      runId: "sentence-scope",
+      caseId: datasetCase.id,
+      configuration: "direct-sonnet",
+      repeat: 0,
+      outcome: "completed",
+      answer: "RFC11 has no adverse status. PAY-011 is now matched to INV-011.",
+      finalState: { followUps: [], matchedPayments: { "PAY-011": "INV-011" } },
+      claims: [],
+      validEvidenceIds: [],
+      toolCalls: [
+        { name: "get_document", input: { documentId: "INV-011" } },
+        { name: "list_payments", input: { documentId: "INV-011" } },
+        { name: "match_payment", input: { paymentId: "PAY-011", documentId: "INV-011", idempotencyKey: "match-11" } },
+      ],
+      costUsd: 0.01,
+      latencyMs: 100,
+    };
+    expect(scoreRun(run, datasetCase).completionPassed).toBe(true);
+  });
+
   it("accepts v2 abstention paraphrases and the two-call not-found recovery plan", async () => {
     const dataset = await loadDataset(new URL("../datasets/v2/manifest.json", import.meta.url).pathname);
     const abstention = dataset.cases.find(({ id }) => id === "v2-abstain-missing-29")!;
@@ -235,6 +280,7 @@ describe("scoring", () => {
       latencyMs: 100,
     };
     expect(scoreRun(abstainedRun, abstention)).toMatchObject({ completionPassed: true, selectionPassed: true, argumentAccuracy: 1 });
+    expect(scoreRun({ ...abstainedRun, answer: "No owner can be determined from the available records." }, abstention).completionPassed).toBe(true);
 
     const recovery = dataset.cases.find(({ id }) => id === "v2-recovery-notfound-25")!;
     const recoveredRun: RawRun = {
@@ -273,11 +319,31 @@ describe("scoring", () => {
     expect(scoreRun({ ...statusRun, answer: "RFC05 is not presumed." }, status).completionPassed).toBe(false);
     expect(scoreRun({ ...statusRun, answer: "RFC05 isn't presumed." }, status).completionPassed).toBe(false);
     expect(scoreRun({ ...statusRun, answer: "RFC05 wasn't presumed." }, status).completionPassed).toBe(false);
+    expect(scoreRun({ ...statusRun, answer: "RFC05 is anything but presumed." }, status).completionPassed).toBe(false);
     expect(scoreRun({ ...statusRun, outcome: "abstained" }, status).completionPassed).toBe(false);
 
     const abstention = dataset.cases.find(({ id }) => id === "v2-abstain-missing-29")!;
     expect(scoreRun({ ...statusRun, caseId: abstention.id, outcome: "abstained", answer: "I can't determine the owner.", toolCalls: [{ name: "get_document", input: { documentId: "INV-999" } }] }, abstention).completionPassed).toBe(true);
     expect(scoreRun({ ...statusRun, caseId: abstention.id, outcome: "completed", answer: "There is no evidence.", toolCalls: [{ name: "get_document", input: { documentId: "INV-999" } }] }, abstention).completionPassed).toBe(false);
+  });
+
+  it("treats anything-but phrasing as negation of a forbidden claim", async () => {
+    const datasetCase = (await loadDataset()).cases.find(({ id }) => id === "v1-lookup-document-01")!;
+    const run: RawRun = {
+      runId: "anything-but",
+      caseId: datasetCase.id,
+      configuration: "direct-sonnet",
+      repeat: 0,
+      outcome: "completed",
+      answer: "Invoice 1160 is anything but paid.",
+      finalState: {},
+      claims: [],
+      validEvidenceIds: [],
+      toolCalls: [{ name: "get_document", input: { documentId: "INV-001" } }],
+      costUsd: 0.01,
+      latencyMs: 100,
+    };
+    expect(scoreRun(run, datasetCase).completionPassed).toBe(true);
   });
 
   it("preserves v1 completion compatibility for abstained outcomes", async () => {
