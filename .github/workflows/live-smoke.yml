@@ -31,7 +31,7 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate
-      - run: pnpm benchmark --config config/smoke.v1.json
+      - run: pnpm benchmark --config config/smoke.v2.json
       - uses: actions/upload-artifact@v4
         with:
           name: live-smoke-${{ github.sha }}

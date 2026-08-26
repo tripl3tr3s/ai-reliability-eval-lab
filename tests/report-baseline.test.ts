@@ -55,7 +55,7 @@ describe("reports and baselines", () => {
   });
 
   it("uses paired case and repeat deltas and rejects missing pairs", () => {
-    const score = (caseId: string, completionPassed: boolean): RunScore => ({ runId: caseId, caseId, configuration: "routed", repeat: 0, selectionPassed: completionPassed, argumentFieldsMatched: Number(completionPassed), argumentFieldsTotal: 1, argumentAccuracy: Number(completionPassed), headlineToolAccuracy: completionPassed, completionPassed, recoveryPassed: completionPassed, unsupportedClaims: 0, checkableClaims: 1, unsupportedClaimRate: 0, costUsd: 1, latencyMs: 100 });
+    const score = (caseId: string, completionPassed: boolean): RunScore => ({ runId: caseId, caseId, configuration: "routed", repeat: 0, selectionPassed: completionPassed, argumentFieldsMatched: Number(completionPassed), argumentFieldsTotal: 1, argumentAccuracy: Number(completionPassed), headlineToolAccuracy: completionPassed, completionPassed, recoveryPassed: completionPassed, unsupportedClaims: 0, checkableClaims: 1, unsupportedClaimRate: 0, costUsd: 1, latencyMs: 100, matchedPlanId: null });
     const baseline = Array.from({ length: 10 }, (_, index) => score(`c${index}`, true));
     const candidate = baseline.map((row) => ({ ...row, completionPassed: false, recoveryPassed: false, argumentAccuracy: 0, headlineToolAccuracy: false }));
     const compared = comparePairedBaseline(baseline, candidate, false, 9);

@@ -3,12 +3,13 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import type { ModelAdapter, RunnerEvent } from "./contracts.js";
 import { ANTHROPIC_MODELS } from "./adapter.js";
-import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, modelForRoutedTask } from "./config.js";
+import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, modelForRoutedTask } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
 import type { FaultKind } from "./faults.js";
-import { runAgent } from "./runner.js";
+import { FINAL_RESULT_INSTRUCTION, runAgent } from "./runner.js";
 import { scoreRun, type RawRun, type ScoredToolCall } from "./scoring.js";
 import { createSyntheticTools } from "./tools.js";
+import { operationalResourceText } from "./fixtures.js";
 import type { TelemetrySink } from "./contracts.js";
 
 const ExperimentFileSchema = z.object({
@@ -20,9 +21,15 @@ const ExperimentFileSchema = z.object({
   pricing: z.string().min(1),
   budgetUsd: z.number().positive(),
   estimatedCostPerRunUsd: z.number().positive(),
-  promptVersion: z.string().min(1),
-  resourceVersion: z.string().min(1),
+  promptVersion: z.enum([LEGACY_PROMPT_VERSION, PROMPT_VERSION]),
+  resourceVersion: z.enum([LEGACY_RESOURCE_VERSION, RESOURCE_VERSION]),
   stratifiedSmoke: z.boolean().optional(),
+}).superRefine((value, context) => {
+  const expected = value.dataset.endsWith("/v1")
+    ? { prompt: LEGACY_PROMPT_VERSION, resource: LEGACY_RESOURCE_VERSION }
+    : { prompt: PROMPT_VERSION, resource: RESOURCE_VERSION };
+  if (value.promptVersion !== expected.prompt) context.addIssue({ code: "custom", path: ["promptVersion"], message: `Expected ${expected.prompt} for ${value.dataset}` });
+  if (value.resourceVersion !== expected.resource) context.addIssue({ code: "custom", path: ["resourceVersion"], message: `Expected ${expected.resource} for ${value.dataset}` });
 });
 export type ExperimentFile = z.infer<typeof ExperimentFileSchema>;
 
@@ -84,15 +91,20 @@ async function runOne(
   ]));
   const tools = createSyntheticTools((tool, context) => faultMap.get(`${tool}:${context.invocation}`) ?? null);
   const resources = configured.resources === "injected"
-    ? "Operational resources: Escalate Definitivo suppliers. Require invoice evidence before payment matching. Never create duplicate follow-ups."
+    ? experiment.resourceVersion === LEGACY_RESOURCE_VERSION
+      ? "Operational resources: Escalate Definitivo suppliers. Require invoice evidence before payment matching. Never create duplicate follow-ups."
+      : `Operational resources: ${operationalResourceText}`
     : "";
+  const finalInstruction = experiment.promptVersion === LEGACY_PROMPT_VERSION
+    ? "Return JSON with outcome, answer, and evidence-linked claims."
+    : FINAL_RESULT_INSTRUCTION;
   const policy = { ...DEFAULT_AGENT_POLICY, maxCostUsd: Math.min(DEFAULT_AGENT_POLICY.maxCostUsd, experiment.budgetUsd) };
   const result = await runAgent({
     runId: `${datasetCase.id}:${configuration}:${repeat}`,
     caseId: datasetCase.id,
     seed: experiment.seed + repeat,
     prompt: datasetCase.prompt,
-    systemPrompt: `You are a bounded fiscal operations agent. ${resources} Return JSON with outcome, answer, and evidence-linked claims.`,
+    systemPrompt: `You are a bounded fiscal operations agent. ${resources} ${finalInstruction}`,
     model: routing.model,
     adapter,
     tools,
@@ -101,6 +113,7 @@ async function runOne(
   });
   const toolCalls = extractToolCalls(result.events);
   const validEvidenceIds = toolCalls.flatMap((call) => call.evidenceId ? [call.evidenceId] : []);
+  const evidenceFacts = extractEvidenceFacts(result.events);
   const rawRun: RawRun = {
     runId: `${datasetCase.id}:${configuration}:${repeat}`,
     caseId: datasetCase.id,
@@ -112,7 +125,8 @@ async function runOne(
     claims: result.claims.map(({ claim, evidenceIds }) => ({ text: claim, evidenceIds, checkable: true })),
     toolCalls,
     validEvidenceIds,
-    latencyMs: routing.latencyMs + latencyFromEvents(result.events),
+    evidenceFacts,
+    latencyMs: routing.latencyMs + result.latencyMs,
     costUsd: result.usage.costUsd + routing.costUsd,
     modelIds: [...(routing.modelId ? [routing.modelId] : []), ...result.modelIds],
     policyViolation: result.outcome === "bounded",
@@ -150,7 +164,7 @@ async function routeModel(prompt: string, adapter: ModelAdapter): Promise<{ mode
   };
 }
 
-function extractToolCalls(events: readonly RunnerEvent[]): ScoredToolCall[] {
+export function extractToolCalls(events: readonly RunnerEvent[]): ScoredToolCall[] {
   return events.filter(({ type }) => type === "tool").map(({ payload }) => {
     const result = payload.result as { evidenceId?: unknown; ok?: unknown } | undefined;
     return {
@@ -162,9 +176,86 @@ function extractToolCalls(events: readonly RunnerEvent[]): ScoredToolCall[] {
   });
 }
 
-function latencyFromEvents(events: readonly RunnerEvent[]): number {
-  if (events.length < 2) return 0;
-  return Math.max(0, Date.parse(events.at(-1)?.at ?? "") - Date.parse(events[0]?.at ?? ""));
+export function extractEvidenceFacts(events: readonly RunnerEvent[]): Readonly<Record<string, readonly string[]>> {
+  return Object.fromEntries(events.flatMap(({ type, payload }) => {
+    if (type !== "tool") return [];
+    const result = payload.result as {
+      evidenceId?: unknown;
+      ok?: unknown;
+      data?: unknown;
+      error?: { code?: unknown; message?: unknown; retryable?: unknown };
+    } | undefined;
+    if (!result || typeof result.evidenceId !== "string") return [];
+    return [[result.evidenceId, evidenceFactsFor(String(payload.name), payload.input, result)]];
+  }));
+}
+
+function evidenceFactsFor(
+  tool: string,
+  input: unknown,
+  result: { ok?: unknown; data?: unknown; error?: { code?: unknown; message?: unknown; retryable?: unknown } },
+): readonly string[] {
+  const inputFacts = flattenFacts(input, "query");
+  if (result.ok !== true) {
+    return [
+      `tool ${tool} failed`,
+      ...inputFacts,
+      ...flattenFacts(result.error, "error"),
+    ];
+  }
+  if (result.data === null) {
+    const documentId = getStringPath(input, "documentId");
+    return [
+      `tool ${tool} returned no result`,
+      "result exists false",
+      "result empty true",
+      ...(tool === "get_document" && documentId
+        ? [`document ${documentId} not found in available records`, `no document found for ${documentId}`]
+        : []),
+      ...inputFacts,
+    ];
+  }
+  if (Array.isArray(result.data)) {
+    const countFacts = [`result count ${result.data.length}`, `result empty ${result.data.length === 0}`];
+    if (result.data.length === 0) {
+      return [
+        `tool ${tool} returned no results`,
+        ...(tool === "search_documents" ? ["no documents matched the query", "zero documents found"] : []),
+        ...(tool === "list_payments" ? ["no payments matched the query", "zero payments found"] : []),
+        ...countFacts,
+        ...inputFacts,
+      ];
+    }
+    return [
+      ...(tool === "search_documents" ? ["documents found"] : []),
+      ...(tool === "list_payments" ? ["payments found"] : []),
+      ...countFacts,
+      ...inputFacts,
+      ...flattenFacts(result.data),
+    ];
+  }
+  const documentId = getStringPath(input, "documentId");
+  return [
+    `tool ${tool} succeeded`,
+    ...(tool === "get_document" && documentId ? [`document ${documentId} found`] : []),
+    ...inputFacts,
+    ...flattenFacts(result.data),
+  ];
+}
+
+function getStringPath(value: unknown, path: string): string | null {
+  if (value === null || typeof value !== "object") return null;
+  const candidate = (value as Record<string, unknown>)[path];
+  return typeof candidate === "string" ? candidate : null;
+}
+
+function flattenFacts(value: unknown, path = "result"): readonly string[] {
+  if (value === null) return [`${path} null`];
+  if (Array.isArray(value)) return value.flatMap((item, index) => flattenFacts(item, `${path}.${index}`));
+  if (typeof value === "object") {
+    return Object.entries(value).flatMap(([key, item]) => flattenFacts(item, `${path}.${key}`));
+  }
+  return [`${path} ${String(value)}`];
 }
 
 function hasDuplicateMutation(items: readonly { idempotencyKey: string }[]): boolean {

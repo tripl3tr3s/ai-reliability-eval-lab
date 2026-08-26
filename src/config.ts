@@ -16,8 +16,10 @@ export const ALL_TOOLS = [
   "create_follow_up",
 ] as const;
 
-export const RESOURCE_VERSION = "operational-resources-v1";
-export const PROMPT_VERSION = "agent-prompt-v1";
+export const RESOURCE_VERSION = "operational-resources-v2";
+export const PROMPT_VERSION = "agent-prompt-v2";
+export const LEGACY_RESOURCE_VERSION = "operational-resources-v1";
+export const LEGACY_PROMPT_VERSION = "agent-prompt-v1";
 
 export const agentPolicySchema = z.object({
   maxIterations: z.number().int().positive().max(6),

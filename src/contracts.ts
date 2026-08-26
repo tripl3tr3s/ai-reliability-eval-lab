@@ -125,11 +125,12 @@ export interface EvidenceClaim { readonly claim: string; readonly evidenceIds: r
 export interface AgentResult {
   readonly outcome: 'completed' | 'abstained' | 'bounded' | 'error';
   readonly answer: string;
-  readonly finalState: { readonly followUps: readonly FollowUp[]; readonly paymentMatches: readonly PaymentMatch[] };
+  readonly finalState: { readonly followUps: readonly FollowUp[]; readonly matchedPayments: Readonly<Record<string, string>> };
   readonly claims: readonly EvidenceClaim[];
   readonly usage: { readonly tokens: number; readonly costUsd: number };
   readonly modelIds: readonly string[];
   readonly events: readonly RunnerEvent[];
+  readonly latencyMs: number;
 }
 
 export interface RunnerEvent {

@@ -13,6 +13,44 @@ type AnthropicClient = {
   };
 };
 
+type AnthropicAdapterLogger = {
+  warn(event: Readonly<Record<string, unknown>>): void;
+};
+
+const knownContentTypes = new Set(["text", "tool_use", "thinking", "redacted_thinking"]);
+
+const TextBlockSchema = z.object({ type: z.literal("text"), text: z.string() });
+
+const ToolUseBlockSchema = z.object({
+  type: z.literal("tool_use"),
+  id: z.string(),
+  name: z.string(),
+  input: z.unknown(),
+}).refine((block) => Object.hasOwn(block, "input"), {
+  message: "Tool-use block must include input",
+});
+
+const ThinkingBlockSchema = z.object({ type: z.literal("thinking") }).passthrough();
+
+const RedactedThinkingBlockSchema = z
+  .object({ type: z.literal("redacted_thinking") })
+  .passthrough();
+
+const UnknownBlockSchema = z
+  .object({ type: z.string() })
+  .passthrough()
+  .refine(({ type }) => !knownContentTypes.has(type), {
+    message: "Known content block does not match its expected schema",
+  });
+
+const ContentBlockSchema = z.union([
+  TextBlockSchema,
+  ToolUseBlockSchema,
+  ThinkingBlockSchema,
+  RedactedThinkingBlockSchema,
+  UnknownBlockSchema,
+]);
+
 const anthropicResponseSchema = z.object({
   model: z.string().min(1),
   stop_reason: z.string().nullable(),
@@ -20,23 +58,18 @@ const anthropicResponseSchema = z.object({
     input_tokens: z.number().int().nonnegative(),
     output_tokens: z.number().int().nonnegative(),
   }),
-  content: z.array(
-    z.discriminatedUnion("type", [
-      z.object({ type: z.literal("text"), text: z.string() }),
-      z.object({
-        type: z.literal("tool_use"),
-        id: z.string(),
-        name: z.string(),
-        input: z.unknown(),
-      }),
-    ]),
-  ),
+  content: z.array(ContentBlockSchema),
 });
+
+const stderrLogger: AnthropicAdapterLogger = {
+  warn: (event) => process.stderr.write(`${JSON.stringify(event)}\n`),
+};
 
 export class AnthropicAdapter implements ModelAdapter {
   constructor(
     private readonly client: AnthropicClient,
     private readonly rates: Readonly<Record<string, ModelRate>>,
+    private readonly logger: AnthropicAdapterLogger = stderrLogger,
   ) {}
 
   async generate(request: ModelRequest): Promise<ModelResponse> {
@@ -67,14 +100,27 @@ export class AnthropicAdapter implements ModelAdapter {
       { signal: request.signal },
     );
     const response = anthropicResponseSchema.parse(raw);
+    for (const block of response.content) {
+      if (!knownContentTypes.has(block.type)) {
+        try {
+          this.logger.warn({
+            event: "anthropic_unexpected_content_block",
+            blockType: block.type,
+            model: response.model,
+          });
+        } catch {
+          // Logging must not invalidate an otherwise scoreable provider response.
+        }
+      }
+    }
     return {
       text: response.content
-        .filter((block): block is Extract<typeof block, { type: "text" }> => block.type === "text")
+        .filter((block): block is z.infer<typeof TextBlockSchema> => block.type === "text")
         .map((block) => block.text)
         .join("\n"),
       toolCalls: response.content
         .filter(
-          (block): block is Extract<typeof block, { type: "tool_use" }> => block.type === "tool_use",
+          (block): block is z.infer<typeof ToolUseBlockSchema> => block.type === "tool_use",
         )
         .map((block) => ({ id: block.id, name: block.name, input: block.input })),
       stopReason: response.stop_reason ?? "unknown",

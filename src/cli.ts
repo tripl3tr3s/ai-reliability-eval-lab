@@ -19,12 +19,12 @@ function option(name: string, fallback?: string): string | undefined {
 
 async function main(): Promise<void> {
   if (command === "validate-dataset") {
-    const bundle = await loadDataset(option("--manifest"));
+    const bundle = await loadDataset(option("--manifest", "datasets/v2/manifest.json"));
     process.stdout.write(`Validated ${bundle.cases.length} cases (${bundle.hash})\n`);
     return;
   }
   if (command === "validate-config") {
-    const path = option("--config", "config/full.v1.json");
+    const path = option("--config", "config/full.v2.json");
     if (!path) throw new Error("Missing config path");
     const config = await loadExperimentConfig(path);
     await loadPricingConfig(config.pricing);
@@ -32,7 +32,7 @@ async function main(): Promise<void> {
     return;
   }
   if (command === "run") {
-    const path = option("--config", "config/full.v1.json");
+    const path = option("--config", "config/full.v2.json");
     const outputPath = option("--output", "runs/results.jsonl");
     if (!path || !outputPath) throw new Error("Missing run path");
     if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for live execution");
@@ -58,7 +58,7 @@ async function main(): Promise<void> {
   if (command === "report") {
     const rawPath = option("--raw", "runs/results.jsonl");
     const outputDirectory = option("--output", "reports/generated");
-    const configPath = option("--config", "config/full.v1.json");
+    const configPath = option("--config", "config/full.v2.json");
     if (!rawPath || !outputDirectory || !configPath) throw new Error("Missing report path");
     const config = await loadExperimentConfig(configPath);
     const dataset = await loadDataset(`${config.dataset}/manifest.json`);

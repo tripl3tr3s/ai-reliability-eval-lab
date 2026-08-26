@@ -29,8 +29,36 @@ describe('bounded runner', () => {
     expect(result.answer).toContain('output token limit');
   });
   it('allows only one final repair', async () => { let calls = 0; const adapter: ModelAdapter = { async generate() { calls += 1; return response({ text: 'invalid' }); } }; const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] } }); expect(result.outcome).toBe('error'); expect(calls).toBe(2); });
+  it('accepts one JSON Markdown fence around an otherwise valid final result', async () => {
+    const adapter: ModelAdapter = { async generate() { return response({ text: '```json\n{"outcome":"completed","answer":"Done","claims":[]}\n```' }); } };
+    const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] } });
+    expect(result.outcome).toBe('completed');
+  });
+  it('repairs a realistic wrong claim shape with exact schema guidance and diagnostics', async () => {
+    const seen: string[] = [];
+    let call = 0;
+    const adapter: ModelAdapter = {
+      async generate(request) {
+        seen.push(request.messages.at(-1)?.content ?? '');
+        call += 1;
+        return call === 1
+          ? response({ text: JSON.stringify({ outcome: 'completed', answer: 'Done', claims: [{ text: 'Done', evidenceIds: [] }] }) })
+          : response({ text: JSON.stringify({ outcome: 'completed', answer: 'Done', claims: [{ claim: 'Done', evidenceIds: [] }] }) });
+      },
+    };
+    const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] } });
+    expect(result.outcome).toBe('completed');
+    expect(seen[1]).toContain('claims');
+    expect(seen[1]).toContain('claim');
+    expect(seen[1]).toContain('Required');
+    expect(seen[1]).toContain('no Markdown fences');
+    expect(result.events).toContainEqual(expect.objectContaining({
+      type: 'error',
+      payload: expect.objectContaining({ phase: 'final_validation' }),
+    }));
+  });
   it('enforces the cost ceiling', async () => { const adapter: ModelAdapter = { async generate() { return response({ usage: { inputTokens: 1, outputTokens: 1, costUsd: 2 } }); } }; const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, maxCostUsd: 1, allowedTools: [] } }); expect(result.answer).toContain('Cost ceiling'); });
   it('replaces malformed raw tool output with a typed boundary failure', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Invalid evidence', claims: [] }) }); } }; await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(() => 'schema-invalid'), policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('INVALID_RESPONSE'); });
   it('preserves Zod validation failures as typed invalid responses', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: {} }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Bad input', claims: [] }) }); } }; await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(), policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('INVALID_RESPONSE'); expect(seen[1]).toContain('documentId'); });
-  it('classifies tool deadline failures as typed timeouts', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Timed out', claims: [] }) }); } }; await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(() => 'timeout'), policy: { ...DEFAULT_AGENT_POLICY, toolTimeoutMs: 1, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('TIMEOUT'); });
+  it('classifies and records tool deadline failures as typed timeouts', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Timed out', claims: [] }) }); } }; const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(() => 'timeout'), policy: { ...DEFAULT_AGENT_POLICY, toolTimeoutMs: 1, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('TIMEOUT'); expect(result.events).toContainEqual(expect.objectContaining({ type: 'tool', payload: expect.objectContaining({ name: 'get_document', result: expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'TIMEOUT' }) }) }) })); });
 });

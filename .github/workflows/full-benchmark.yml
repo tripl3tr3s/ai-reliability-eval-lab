@@ -29,8 +29,8 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate
-      - run: pnpm benchmark --config config/full.v1.json
-      - run: pnpm report --raw runs/results.jsonl --output reports/generated
+      - run: pnpm benchmark --config config/full.v2.json
+      - run: pnpm report --raw runs/results.jsonl --output reports/generated --config config/full.v2.json
       - uses: actions/upload-artifact@v4
         with:
           name: full-benchmark-${{ github.sha }}

@@ -1,6 +1,6 @@
 # AI Reliability and Evaluation Lab
 
-A reproducible, synthetic benchmark for bounded tool-using agents. It compares direct Sonnet, routed Haiku/Sonnet, and routed execution without operational resource injection. The benchmark uses fictional Mexican fiscal and operational data and the published `efos-risk-graph` package.
+A reproducible, synthetic benchmark for bounded tool-using agents. It compares direct Sonnet, routed Haiku/Sonnet, and routed execution without operational resource injection. The benchmark uses fictional Mexican fiscal and operational data and the published `efos-risk-graph` package. Dataset v2 and its matching v2 experiment configurations are the current benchmark contract. The v1 dataset remains available for historical reference and compatibility checks.
 
 The benchmark pins `claude-sonnet-5` for Sonnet execution and `claude-haiku-4-5-20251001` for routing and simple read-only execution. Sonnet 5 requests omit `temperature` so Anthropic's adaptive-thinking defaults remain valid, and the adapter rejects any defined Sonnet temperature before making a provider request. Haiku routing and execution retain `temperature: 0` for deterministic classification and simple-task behavior.
 
@@ -35,8 +35,17 @@ pnpm benchmark:mock
 Run a live smoke experiment with a strict two-dollar ceiling:
 
 ```sh
-ANTHROPIC_API_KEY=... pnpm benchmark --config config/smoke.v1.json
+ANTHROPIC_API_KEY=... pnpm benchmark --config config/smoke.v2.json --output runs/smoke-v2.jsonl
 ```
+
+Run the complete live benchmark only after reviewing a clean smoke result:
+
+```sh
+ANTHROPIC_API_KEY=... pnpm benchmark --config config/full.v2.json --output runs/results.jsonl
+pnpm report --raw runs/results.jsonl --config config/full.v2.json --output reports/generated
+```
+
+The CLI defaults to `datasets/v2/manifest.json` and `config/full.v2.json` when the corresponding option is omitted.
 
 Raw runs and append-only telemetry are written locally. Provider request IDs, API keys, and observability secrets are never included. Optional Langfuse export activates only when `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` are all present. Local JSONL remains the scoring source of truth.
 
@@ -45,6 +54,14 @@ Raw runs and append-only telemetry are written locally. Provider request IDs, AP
 Published output records the commit, dataset and configuration hashes, prompt and resource versions, exact provider-returned model identifiers, repeat count, seed, Node and lockfile versions, pricing version and effective date, timestamps, token usage, and raw-result references. Dataset versions are immutable after baseline release. Corrections require a new version and manifest hash.
 
 `pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values.
+
+## Dataset v2 scoring contract
+
+Dataset v2 scores required outcomes with structured semantic assertions. Each assertion contains one or more text conditions, and alternative assertion groups represent accepted paraphrases. This avoids requiring one exact sentence while keeping completion criteria deterministic.
+
+Tool behavior is evaluated against one or more accepted plans per case. Each plan specifies call order and call-specific argument matchers, so distinct valid strategies can pass without accepting unrelated calls. Null and empty tool results are retained as meaningful negative evidence, allowing evidence-backed abstention without inventing facts.
+
+Safe policy reads are accepted only when the prompt requests the policy or when the read occurs immediately before a related simulated write. A related policy read may also appear first when it is part of the declared accepted plan for that write. Irrelevant reads, undeclared extra calls, and all extra writes remain rejected. This policy is explicit in each case's accepted plans rather than applied as a global scoring exception.
 
 ## CI and publication
 

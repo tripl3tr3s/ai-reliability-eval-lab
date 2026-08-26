@@ -37,6 +37,84 @@ describe("AnthropicAdapter", () => {
     expect(result.usage.costUsd).toBe((12 * 2 + 4 * 10) / 1_000_000);
   });
 
+  it("ignores thinking blocks and reports unsupported content blocks", async () => {
+    const create = vi.fn().mockResolvedValue({
+      model: ANTHROPIC_MODELS.sonnet,
+      stop_reason: "end_turn",
+      usage: { input_tokens: 12, output_tokens: 4 },
+      content: [
+        { type: "thinking", thinking: "private", signature: "signature" },
+        { type: "redacted_thinking", data: "redacted" },
+        { type: "future_block", value: "new provider content" },
+        { type: "text", text: "scored answer" },
+      ],
+    });
+    const warn = vi.fn();
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates, { warn });
+
+    const result = await adapter.generate({
+      model: ANTHROPIC_MODELS.sonnet,
+      messages: [{ role: "user", content: "Answer" }],
+      tools: [],
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+    });
+
+    expect(result.text).toBe("scored answer");
+    expect(result.toolCalls).toEqual([]);
+    expect(warn).toHaveBeenCalledOnce();
+    expect(warn).toHaveBeenCalledWith({
+      event: "anthropic_unexpected_content_block",
+      blockType: "future_block",
+      model: ANTHROPIC_MODELS.sonnet,
+    });
+  });
+
+  it("rejects malformed known content blocks instead of silently ignoring them", async () => {
+    const create = vi.fn().mockResolvedValue({
+      model: ANTHROPIC_MODELS.sonnet,
+      stop_reason: "tool_use",
+      usage: { input_tokens: 12, output_tokens: 4 },
+      content: [{ type: "tool_use", id: "call-1", name: "get_document" }],
+    });
+    const warn = vi.fn();
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates, { warn });
+
+    await expect(adapter.generate({
+      model: ANTHROPIC_MODELS.sonnet,
+      messages: [{ role: "user", content: "Answer" }],
+      tools: [],
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+    })).rejects.toThrow();
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("does not fail generation when unexpected-block logging fails", async () => {
+    const create = vi.fn().mockResolvedValue({
+      model: ANTHROPIC_MODELS.sonnet,
+      stop_reason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+      content: [
+        { type: "future_block", value: "new provider content" },
+        { type: "text", text: "scored answer" },
+      ],
+    });
+    const adapter = new AnthropicAdapter(
+      { messages: { create } },
+      rates,
+      { warn: () => { throw new Error("logger unavailable"); } },
+    );
+
+    await expect(adapter.generate({
+      model: ANTHROPIC_MODELS.sonnet,
+      messages: [{ role: "user", content: "Answer" }],
+      tools: [],
+      maxOutputTokens: 100,
+      signal: new AbortController().signal,
+    })).resolves.toMatchObject({ text: "scored answer", toolCalls: [] });
+  });
+
   it("passes an explicitly configured temperature to Haiku", async () => {
     const create = vi.fn().mockResolvedValue({
       model: ANTHROPIC_MODELS.haiku,

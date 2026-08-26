@@ -1,0 +1,13 @@
+{
+  "dataset": "datasets/v2",
+  "configurations": ["direct-sonnet", "routed", "no-resource-injection"],
+  "repeats": 2,
+  "seed": 20260825,
+  "concurrency": 1,
+  "pricing": "config/pricing.v1.json",
+  "budgetUsd": 2,
+  "estimatedCostPerRunUsd": 0.04,
+  "promptVersion": "agent-prompt-v2",
+  "resourceVersion": "operational-resources-v2",
+  "stratifiedSmoke": true
+}

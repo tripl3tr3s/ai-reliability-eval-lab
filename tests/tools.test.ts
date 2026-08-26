@@ -4,10 +4,42 @@ import { createCaseState, createSyntheticTools } from '../src/tools.js';
 const context = { caseId: 'case-1', seed: 1, invocation: 1, state: createCaseState(), signal: new AbortController().signal };
 describe('synthetic tools', () => {
   it('exposes exactly eight tools and validates input', async () => { const tools = createSyntheticTools(); expect(tools).toHaveLength(8); await expect(tools[1]!.execute({}, context)).rejects.toThrow(); });
-  it('uses efos-risk-graph', async () => { const tool = createSyntheticTools().find((item) => item.name === 'analyze_supplier_network')!; const result = await tool.execute({ supplierRfc: 'CLI010101AA1', maxDepth: 3 }, context); expect(result.ok).toBe(true); if (result.ok) expect((result.data as { proximity: { score: number } }).proximity.score).toBe(0.5); });
+  it('accepts the dataset search arguments and filters deterministically', async () => {
+    const tool = createSyntheticTools().find((item) => item.name === 'search_documents')!;
+    const bySupplier = await tool.execute({ supplierRfc: 'RFC03' }, context);
+    const byType = await tool.execute({ documentType: 'credit_note' }, context);
+    expect(bySupplier.ok && bySupplier.data).toEqual([expect.objectContaining({ id: 'INV-003' })]);
+    expect(byType.ok && byType.data).toEqual([expect.objectContaining({ id: 'CN-009' })]);
+  });
+  it('lists payments by document id', async () => {
+    const tool = createSyntheticTools().find((item) => item.name === 'list_payments')!;
+    const result = await tool.execute({ documentId: 'INV-016' }, context);
+    expect(result.ok && result.data).toEqual([expect.objectContaining({ id: 'PAY-016', amount: 11600 })]);
+  });
+  it('uses dataset argument names for supplier tools', async () => {
+    const tools = createSyntheticTools();
+    const status = await tools.find((item) => item.name === 'check_supplier_status')!.execute({ rfc: 'RFC05' }, context);
+    const network = await tools.find((item) => item.name === 'analyze_supplier_network')!.execute({ rfc: 'RFC12' }, context);
+    expect(status.ok && status.data).toEqual(expect.objectContaining({ rfc: 'RFC05', status: 'presumed' }));
+    expect(network.ok && network.data).toEqual(expect.objectContaining({ rfc: 'RFC12', assessment: expect.stringContaining('risk') }));
+  });
+  it('keeps supplierRfc for follow-ups and accepts dataset RFC identifiers', async () => {
+    const tool = createSyntheticTools().find((item) => item.name === 'create_follow_up')!;
+    const isolatedContext = { ...context, state: createCaseState() };
+    const result = await tool.execute({ supplierRfc: 'RFC14', reason: 'presumed risk', idempotencyKey: 'case-14' }, isolatedContext);
+    expect(result.ok && result.data).toEqual(expect.objectContaining({ supplierRfc: 'RFC14' }));
+  });
+  it('retrieves policies by policy id', async () => {
+    const tool = createSyntheticTools().find((item) => item.name === 'get_operational_policy')!;
+    const supplierRisk = await tool.execute({ policyId: 'supplier-risk' }, context);
+    const reconciliation = await tool.execute({ policyId: 'payment-reconciliation' }, context);
+    expect(supplierRisk.ok && supplierRisk.data).toEqual(expect.objectContaining({ id: 'supplier-risk', guidance: expect.stringContaining('review') }));
+    expect(reconciliation.ok && reconciliation.data).toEqual(expect.objectContaining({ id: 'payment-reconciliation', guidance: expect.stringContaining('reconcile') }));
+  });
+  it('uses efos-risk-graph', async () => { const tool = createSyntheticTools().find((item) => item.name === 'analyze_supplier_network')!; const result = await tool.execute({ rfc: 'CLI010101AA1', maxDepth: 3 }, context); expect(result.ok).toBe(true); if (result.ok) expect((result.data as { proximity: { score: number } }).proximity.score).toBe(0.5); });
   it('does not duplicate a committed write after response loss', async () => { const tool = createSyntheticTools(() => 'response-loss-after-write').find((item) => item.name === 'create_follow_up')!; const input = { supplierRfc: 'EFO010101AA1', reason: 'risk', idempotencyKey: 'key-1' }; await tool.execute(input, context); const replay = await tool.execute(input, { ...context, invocation: 2 }); expect(context.state.followUps.size).toBe(1); expect(replay.idempotency?.replayed).toBe(true); });
   it('idempotently persists payment matches', async () => { const tool = createSyntheticTools().find((item) => item.name === 'match_payment')!; const input = { paymentId: 'PAY-001', documentId: 'INV-001', idempotencyKey: 'match-1' }; const first = await tool.execute(input, context); const replay = await tool.execute(input, { ...context, invocation: 2 }); expect(context.state.paymentMatches.size).toBe(1); expect(first.idempotency?.replayed).toBe(false); expect(replay.idempotency?.replayed).toBe(true); });
   it.each(['transient', 'rate-limit', 'not-found'] as const)('returns a typed %s failure', async (fault) => { const tool = createSyntheticTools(() => fault)[0]!; const result = await tool.execute({ query: 'invoice' }, context); expect(result.ok).toBe(false); });
-  it('marks stale and contradictory responses detectably', async () => { const stale = await createSyntheticTools(() => 'stale')[0]!.execute({ query: 'invoice' }, context); const contradictory = await createSyntheticTools(() => 'contradiction')[0]!.execute({ query: 'invoice' }, context); expect(stale.freshAt).toBe('2020-01-01T00:00:00.000Z'); expect(contradictory.ok && (contradictory.data as { contradictionDetected: boolean }).contradictionDetected).toBe(true); });
+  it('marks stale and genuinely contradictory responses detectably', async () => { const stale = await createSyntheticTools(() => 'stale')[0]!.execute({ query: 'invoice' }, context); const contradictory = await createSyntheticTools(() => 'contradiction').find((item) => item.name === 'check_supplier_status')!.execute({ rfc: 'RFC27' }, context); expect(stale.freshAt).toBe('2020-01-01T00:00:00.000Z'); expect(contradictory.ok && (contradictory.data as { contradictionDetected: boolean }).contradictionDetected).toBe(true); if (contradictory.ok) { const data = contradictory.data as { primary: unknown; contradictory: unknown }; expect(data.primary).not.toEqual(data.contradictory); } });
   it('emits a deliberately invalid raw payload for schema fault boundary tests', async () => { const result = await createSyntheticTools(() => 'schema-invalid')[0]!.execute({ query: 'invoice' }, context); expect(result).toEqual({ ok: true, data: 'malformed' }); });
 });

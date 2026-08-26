@@ -9,6 +9,35 @@ const ToolPatternSchema = z.object({
   ordered: z.boolean().default(true),
 });
 
+const PlanArgumentMatcherSchema = z.union([
+  z.object({
+    path: z.string().min(1),
+    operator: z.literal("nonempty"),
+  }),
+  z.object({
+    path: z.string().min(1),
+    equals: z.unknown(),
+  }).refine((matcher) => Object.hasOwn(matcher, "equals"), {
+    message: "Equals matcher must include equals",
+  }),
+]);
+
+const PlanCallSchema = z.object({
+  tool: z.string().min(1),
+  argumentMatchers: z.array(PlanArgumentMatcherSchema).default([]),
+});
+
+const AcceptedPlanSchema = z.object({
+  id: z.string().regex(/^[a-z0-9-]+$/),
+  calls: z.array(PlanCallSchema).min(1),
+  ordered: z.boolean().default(true),
+});
+
+const RequiredAssertionTermSchema = z.object({
+  type: z.literal("text"),
+  includes: z.string().min(1),
+});
+
 const ArgumentMatcherSchema = z.object({
   tool: z.string().min(1),
   invocation: z.number().int().positive().default(1),
@@ -36,7 +65,7 @@ const FaultSchema = z.object({
   ]),
 });
 
-export const DatasetCaseSchema = z.object({
+export const DatasetCaseV1Schema = z.object({
   id: z.string().regex(/^v1-[a-z0-9-]+$/),
   category: z.enum(["lookup", "multi_tool", "recovery", "abstention"]),
   fixture: z.string().min(1),
@@ -69,17 +98,56 @@ export const DatasetCaseSchema = z.object({
   }
 });
 
-export type DatasetCase = z.infer<typeof DatasetCaseSchema>;
+export const DatasetCaseV2Schema = z.object({
+  id: z.string().regex(/^v2-[a-z0-9-]+$/),
+  category: z.enum(["lookup", "multi_tool", "recovery", "abstention"]),
+  fixture: z.string().min(1),
+  tags: z.array(z.string().min(1)).min(1),
+  prompt: z.string().min(10),
+  acceptedPlans: z.array(AcceptedPlanSchema).min(1),
+  forbiddenTools: z.array(z.string()).default([]),
+  expectedState: z.array(StateAssertionSchema),
+  requiredAssertions: z.array(z.array(RequiredAssertionTermSchema).min(1)).min(1),
+  forbiddenClaims: z.array(z.string()),
+  faultSchedule: z.array(FaultSchema),
+  recoveryExpectations: z.object({
+    mustRecover: z.boolean(),
+    noDuplicateMutation: z.boolean(),
+  }),
+  metricApplicability: z.object({
+    completion: z.literal(true),
+    toolSelection: z.boolean(),
+    arguments: z.boolean(),
+    recovery: z.boolean(),
+    unsupportedClaims: z.literal(true),
+  }),
+}).superRefine((value, context) => {
+  if (value.metricApplicability.arguments && !value.acceptedPlans.some(({ calls }) => calls.some(({ argumentMatchers }) => argumentMatchers.length > 0))) {
+    context.addIssue({ code: "custom", path: ["acceptedPlans"], message: "argument-scored cases need plan matchers" });
+  }
+  if (value.metricApplicability.recovery !== (value.faultSchedule.length > 0)) {
+    context.addIssue({ code: "custom", path: ["metricApplicability", "recovery"], message: "recovery applicability must match fault schedule" });
+  }
+  const planIds = new Set(value.acceptedPlans.map(({ id }) => id));
+  if (planIds.size !== value.acceptedPlans.length) {
+    context.addIssue({ code: "custom", path: ["acceptedPlans"], message: "accepted plan IDs must be unique within a case" });
+  }
+});
+
+export const DatasetCaseSchema = z.union([DatasetCaseV1Schema, DatasetCaseV2Schema]);
+export type DatasetCaseV1 = z.infer<typeof DatasetCaseV1Schema>;
+export type DatasetCaseV2 = z.infer<typeof DatasetCaseV2Schema>;
+export type DatasetCase = DatasetCaseV1 | DatasetCaseV2;
 
 const ManifestSchema = z.object({
-  version: z.literal("v1"),
+  version: z.enum(["v1", "v2"]),
   caseFile: z.string().min(1),
   caseCount: z.literal(30),
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
 });
 
 export interface DatasetBundle {
-  version: "v1";
+  version: "v1" | "v2";
   cases: readonly DatasetCase[];
   hash: string;
   manifestPath: string;
@@ -100,8 +168,9 @@ export async function loadDataset(
 
   const lines = casesText.split(/\r?\n/u).filter((line) => line.trim().length > 0);
   if (lines.length !== manifest.caseCount) throw new Error(`Dataset must contain exactly ${manifest.caseCount} cases, received ${lines.length}`);
+  const caseSchema = manifest.version === "v1" ? DatasetCaseV1Schema : DatasetCaseV2Schema;
   const cases = lines.map((line, index) => {
-    try { return DatasetCaseSchema.parse(JSON.parse(line)); }
+    try { return caseSchema.parse(JSON.parse(line)); }
     catch (error) { throw new Error(`Invalid dataset case on line ${index + 1}`, { cause: error }); }
   });
   const ids = new Set(cases.map(({ id }) => id));
