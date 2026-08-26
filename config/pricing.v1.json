@@ -1,0 +1,11 @@
+{
+  "$schema": "./pricing.schema.json",
+  "version": "anthropic-2026-08-10-sonnet-5",
+  "effectiveDate": "2026-08-10",
+  "sourceUrl": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "currency": "USD",
+  "perMillionTokens": {
+    "claude-haiku-4-5-20251001": { "input": 1, "output": 5 },
+    "claude-sonnet-5": { "input": 2, "output": 10 }
+  }
+}

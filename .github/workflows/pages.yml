@@ -1,0 +1,55 @@
+name: Publish reviewed report
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Successful reviewed full benchmark workflow run ID
+        required: true
+        type: string
+      artifact_name:
+        description: Artifact name from the reviewed full benchmark run
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.artifact_name }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.artifact_run_id }}
+          path: artifact
+      - name: Require complete generated report
+        run: |
+          test -s artifact/reports/generated/index.html
+          test -s artifact/reports/generated/summary.json
+          test -s artifact/runs/results.jsonl
+          node -e "const s=require('./artifact/reports/generated/summary.json'); if(s.status!=='complete') process.exit(1)"
+      - name: Stage latest and immutable report
+        run: |
+          mkdir -p site/latest site/history/${{ inputs.artifact_run_id }}
+          cp -R artifact/reports/generated/. site/latest/
+          cp -R artifact/reports/generated/. site/history/${{ inputs.artifact_run_id }}/
+          cp artifact/reports/generated/index.html site/index.html
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+      - id: deployment
+        uses: actions/deploy-pages@v4

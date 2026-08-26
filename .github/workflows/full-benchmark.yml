@@ -1,0 +1,41 @@
+name: Full benchmark
+
+on:
+  schedule:
+    - cron: "17 8 1 * *"
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    environment: full-benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      MAX_EXPERIMENT_COST_USD: "25"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          run_install: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm validate
+      - run: pnpm benchmark --config config/full.v1.json
+      - run: pnpm report --raw runs/results.jsonl --output reports/generated
+      - uses: actions/upload-artifact@v4
+        with:
+          name: full-benchmark-${{ github.sha }}
+          path: |
+            runs/
+            reports/generated/
+          if-no-files-found: error
+          retention-days: 90

@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["version", "effectiveDate", "sourceUrl", "currency", "perMillionTokens"],
+  "additionalProperties": false,
+  "properties": {
+    "$schema": { "type": "string" },
+    "version": { "type": "string", "minLength": 1 },
+    "effectiveDate": { "type": "string", "format": "date" },
+    "sourceUrl": { "type": "string", "format": "uri" },
+    "currency": { "const": "USD" },
+    "perMillionTokens": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "object",
+        "required": ["input", "output"],
+        "additionalProperties": false,
+        "properties": {
+          "input": { "type": "number", "minimum": 0 },
+          "output": { "type": "number", "minimum": 0 }
+        }
+      }
+    }
+  }
+}
