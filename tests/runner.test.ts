@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import type { ModelAdapter, ModelResponse } from '../src/contracts.js';
 import { DEFAULT_AGENT_POLICY } from '../src/contracts.js';
 import { runAgent } from '../src/runner.js';
@@ -61,4 +62,50 @@ describe('bounded runner', () => {
   it('replaces malformed raw tool output with a typed boundary failure', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Invalid evidence', claims: [] }) }); } }; await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(() => 'schema-invalid'), policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('INVALID_RESPONSE'); });
   it('preserves Zod validation failures as typed invalid responses', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: {} }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Bad input', claims: [] }) }); } }; await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(), policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('INVALID_RESPONSE'); expect(seen[1]).toContain('documentId'); });
   it('classifies and records tool deadline failures as typed timeouts', async () => { const seen: string[] = []; let call = 0; const adapter: ModelAdapter = { async generate(request) { seen.push(request.messages.at(-1)?.content ?? ''); call += 1; return call === 1 ? response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] }) : response({ text: JSON.stringify({ outcome: 'abstained', answer: 'Timed out', claims: [] }) }); } }; const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(() => 'timeout'), policy: { ...DEFAULT_AGENT_POLICY, toolTimeoutMs: 1, allowedTools: ['get_document'] } }); expect(seen[1]).toContain('TIMEOUT'); expect(result.events).toContainEqual(expect.objectContaining({ type: 'tool', payload: expect.objectContaining({ name: 'get_document', result: expect.objectContaining({ ok: false, error: expect.objectContaining({ code: 'TIMEOUT' }) }) }) })); });
+  it('handles an already-aborted parent signal and removes its relay listener', async () => {
+    const completedController = new AbortController();
+    const remove = vi.spyOn(completedController.signal, 'removeEventListener');
+    const adapter: ModelAdapter = { async generate() { return response({ text: JSON.stringify({ outcome: 'completed', answer: 'Done', claims: [] }) }); } };
+    await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] }, signal: completedController.signal });
+    expect(remove).toHaveBeenCalledWith('abort', expect.any(Function));
+
+    const abortedController = new AbortController();
+    abortedController.abort(new Error('cancelled before start'));
+    const generate = vi.fn(adapter.generate);
+    const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter: { generate }, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] }, signal: abortedController.signal });
+    expect(generate).not.toHaveBeenCalled();
+    expect(result.outcome).toBe('bounded');
+  });
+  it('stops later tool calls when the parent signal aborts during execution', async () => {
+    const controller = new AbortController();
+    const secondExecute = vi.fn(async () => ({ ok: true as const, data: null, evidenceId: 'second', provenance: 'test', freshAt: new Date(0).toISOString() }));
+    const adapter: ModelAdapter = { async generate() { return response({ toolCalls: [
+      { id: '1', name: 'first', input: {} },
+      { id: '2', name: 'second', input: {} },
+    ] }); } };
+    const tools = [
+      {
+        name: 'first', description: 'first', inputSchema: z.object({}), sideEffect: 'read' as const,
+        async execute(_input: unknown, context: { signal: AbortSignal }) {
+          queueMicrotask(() => controller.abort(new Error('cancelled during tool')));
+          return new Promise<never>((_resolve, reject) => context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }));
+        },
+      },
+      { name: 'second', description: 'second', inputSchema: z.object({}), sideEffect: 'simulated-write' as const, execute: secondExecute },
+    ];
+    await expect(runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools, policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['first', 'second'] }, signal: controller.signal })).rejects.toThrow('cancelled during tool');
+    expect(secondExecute).not.toHaveBeenCalled();
+  });
+  it('keeps an internal agent deadline as a bounded outcome', async () => {
+    const adapter: ModelAdapter = { async generate() { return response({ toolCalls: [{ id: '1', name: 'slow', input: {} }] }); } };
+    const tools = [{
+      name: 'slow', description: 'slow', inputSchema: z.object({}), sideEffect: 'read' as const,
+      async execute(_input: unknown, context: { signal: AbortSignal }) {
+        return new Promise<never>((_resolve, reject) => context.signal.addEventListener('abort', () => reject(context.signal.reason), { once: true }));
+      },
+    }];
+    const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools, policy: { ...DEFAULT_AGENT_POLICY, deadlineMs: 1, toolTimeoutMs: 100, allowedTools: ['slow'] } });
+    expect(result.outcome).toBe('bounded');
+    expect(result.answer).toContain('Deadline exceeded');
+  });
 });

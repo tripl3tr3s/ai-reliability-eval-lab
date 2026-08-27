@@ -13,6 +13,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
     "benchmark": "tsx src/cli.ts run",
+    "benchmark:interactive": "tsx src/cli.ts run --interactive",
     "benchmark:mock": "vitest run tests/experiment.test.ts",
     "check": "pnpm lint && pnpm type-check && pnpm test:coverage && pnpm dataset:validate && pnpm config:validate",
     "config:validate": "tsx src/cli.ts validate-config",
@@ -29,6 +30,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.65.0",
+    "@clack/prompts": "1.7.0",
     "efos-risk-graph": "0.3.0",
     "zod": "3.25.76",
     "zod-to-json-schema": "3.24.6"

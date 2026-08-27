@@ -1,94 +1,223 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
+import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
+import * as prompts from "@clack/prompts";
+import { z } from "zod";
 import { AnthropicAdapter } from "./adapter.js";
+import { CliPathSchema, parseCliArguments, validateRunArtifactTargets, type CliArguments } from "./cli-options.js";
+import {
+  createInteractiveArtifactPaths,
+  createProgressRenderer,
+  isCiEnvironment,
+  isNoColorEnvironment,
+  reserveInteractiveArtifactPaths,
+  resolveProgressMode,
+} from "./cli-ui.js";
 import { loadDataset } from "./dataset.js";
-import { loadExperimentConfig, runExperiment } from "./experiment.js";
+import { loadExperimentConfig, planExperiment, runExperiment } from "./experiment.js";
+import {
+  GuidedRunCancelledError,
+  GuidedRunDeclinedError,
+  resolveGuidedRun,
+  type GuidedPromptPort,
+} from "./guided-run.js";
+import { loadPricingConfig } from "./pricing.js";
 import { writeReport, type RunManifest } from "./report.js";
+import { createRunSignalController } from "./run-signal.js";
 import type { RawRun } from "./scoring.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
-import { loadPricingConfig } from "./pricing.js";
 
-const [command, ...arguments_] = process.argv.slice(2);
+const ApiKeySchema = z.string().min(1, "ANTHROPIC_API_KEY is required for live execution");
 
-function option(name: string, fallback?: string): string | undefined {
-  const index = arguments_.indexOf(name);
-  return index < 0 ? fallback : arguments_[index + 1];
-}
-
-async function main(): Promise<void> {
-  if (command === "validate-dataset") {
-    const bundle = await loadDataset(option("--manifest", "datasets/v2/manifest.json"));
+export async function main(argv: readonly string[]): Promise<void> {
+  const parsed = parseCliArguments(argv);
+  if (parsed.command === "validate-dataset") {
+    const bundle = await loadDataset(parsed.manifestPath ?? "datasets/v2/manifest.json");
     process.stdout.write(`Validated ${bundle.cases.length} cases (${bundle.hash})\n`);
     return;
   }
-  if (command === "validate-config") {
-    const path = option("--config", "config/full.v2.json");
-    if (!path) throw new Error("Missing config path");
+  if (parsed.command === "validate-config") {
+    const path = parsed.configPath ?? "config/full.v2.json";
     const config = await loadExperimentConfig(path);
     await loadPricingConfig(config.pricing);
     process.stdout.write(`Validated ${path}\n`);
     return;
   }
-  if (command === "run") {
-    const path = option("--config", "config/full.v2.json");
-    const outputPath = option("--output", "runs/results.jsonl");
-    if (!path || !outputPath) throw new Error("Missing run path");
-    if (!process.env.ANTHROPIC_API_KEY) throw new Error("ANTHROPIC_API_KEY is required for live execution");
-    const config = await loadExperimentConfig(path);
-    const pricing = await loadPricingConfig(config.pricing);
-    const telemetry = new CompositeTelemetrySink([
-      new JsonlTelemetrySink("runs/events.jsonl"),
-      await createLangfuseTelemetry(),
-    ]);
-    const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  if (parsed.command === "run") {
+    await runLiveExperiment(parsed);
+    return;
+  }
+  await report(parsed);
+}
+
+async function runLiveExperiment(options: Extract<CliArguments, { command: "run" }>): Promise<void> {
+  const guided = options.interactive ? await guidedOptions(options) : null;
+  const configPath = guided?.configPath ?? options.configPath ?? "config/full.v2.json";
+  const outputPath = guided?.outputPath ?? options.outputPath ?? "runs/results.jsonl";
+  const eventsPath = guided?.eventsPath ?? options.eventsPath ?? "runs/events.jsonl";
+  await validateRunArtifactTargets(outputPath, eventsPath);
+  const config = guided?.config ?? await loadExperimentConfig(configPath);
+  const pricing = await loadPricingConfig(config.pricing);
+  const apiKeyResult = ApiKeySchema.safeParse(process.env.ANTHROPIC_API_KEY);
+  if (!apiKeyResult.success) throw new Error("ANTHROPIC_API_KEY is required for live execution");
+  const apiKey = apiKeyResult.data;
+  if (options.interactive) {
+    await reserveInteractiveArtifactPaths({ resultsPath: outputPath, eventsPath });
+  }
+  const telemetry = new CompositeTelemetrySink([
+    new JsonlTelemetrySink(eventsPath),
+    await createLangfuseTelemetry(),
+  ]);
+  const anthropic = new Anthropic({ apiKey });
+  const resolvedMode = resolveProgressMode({
+    requested: options.progress,
+    isTTY: Boolean(process.stderr.isTTY),
+    isCI: isCiEnvironment(process.env),
+    noColor: isNoColorEnvironment(process.env),
+  });
+  const renderer = createProgressRenderer({
+    mode: resolvedMode,
+    output: process.stderr,
+    artifacts: { resultsPath: outputPath, eventsPath },
+  });
+  const runSignal = createRunSignalController((code) => process.exit(code));
+  const handleInterrupt = (): void => runSignal.handleInterrupt();
+  process.on("SIGINT", handleInterrupt);
+  try {
     await runExperiment({
       config,
       adapter: new AnthropicAdapter({
         messages: {
-          create: (request, options) => anthropic.messages.create(request as never, options),
+          create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions),
         },
       }, pricing.perMillionTokens),
       outputPath,
       telemetry,
+      signal: runSignal.signal,
+      onProgress: renderer.onEvent,
     });
-    return;
+  } catch (error) {
+    if (runSignal.signal.aborted) {
+      process.exitCode = 130;
+      return;
+    }
+    throw error;
+  } finally {
+    process.off("SIGINT", handleInterrupt);
   }
-  if (command === "report") {
-    const rawPath = option("--raw", "runs/results.jsonl");
-    const outputDirectory = option("--output", "reports/generated");
-    const configPath = option("--config", "config/full.v2.json");
-    if (!rawPath || !outputDirectory || !configPath) throw new Error("Missing report path");
-    const config = await loadExperimentConfig(configPath);
-    const dataset = await loadDataset(`${config.dataset}/manifest.json`);
-    const rawText = await readFile(rawPath, "utf8");
-    const runs = rawText.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as RawRun);
-    const pricing = await loadPricingConfig(config.pricing);
-    const manifest: RunManifest = {
-      commitSha: process.env.GITHUB_SHA ?? "local",
-      datasetHash: dataset.hash,
-      configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
-      promptVersion: config.promptVersion,
-      resourceVersion: config.resourceVersion,
-      models: [...new Set(runs.flatMap(({ modelIds }) => modelIds ?? []))],
-      repeatCount: config.repeats,
-      seed: config.seed,
-      nodeVersion: process.version,
-      lockfileVersion: "pnpm-lock.yaml",
-      pricingVersion: pricing.version,
-      pricingEffectiveDate: pricing.effectiveDate,
-      startedAt: new Date().toISOString(),
-      completedAt: new Date().toISOString(),
-      rawResultReferences: [rawPath],
-    };
-    await writeReport(outputDirectory, runs, dataset.cases, manifest);
-    return;
-  }
-  throw new Error("Usage: reliability-lab <validate-dataset|validate-config|run|report>");
 }
 
-main().catch((error: unknown) => {
-  process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+async function guidedOptions(options: Extract<CliArguments, { command: "run" }>) {
+  if (!process.stdin.isTTY || !process.stderr.isTTY) {
+    throw new Error("Interactive mode requires an interactive terminal");
+  }
+  const prompt = createGuidedPromptPort();
+  prompts.intro("AI Reliability Evaluation Lab", { output: process.stderr });
+  try {
+    const guided = await resolveGuidedRun({
+      isTTY: true,
+      ...(options.configPath === undefined ? {} : { configPath: options.configPath }),
+      ...(options.outputPath === undefined ? {} : { outputPath: options.outputPath }),
+      ...(options.eventsPath === undefined ? {} : { eventsPath: options.eventsPath }),
+      prompt,
+      loadConfig: loadExperimentConfig,
+      planExperiment,
+      createArtifactPaths: () => createInteractiveArtifactPaths(),
+    });
+    prompts.outro("Preflight approved. Starting evaluation.", { output: process.stderr });
+    return guided;
+  } catch (error) {
+    if (error instanceof GuidedRunDeclinedError || error instanceof GuidedRunCancelledError) {
+      prompts.cancel(error.message, { output: process.stderr });
+    }
+    throw error;
+  }
+}
+
+function createGuidedPromptPort(): GuidedPromptPort {
+  const io = { input: process.stdin, output: process.stderr } as const;
+  return {
+    chooseConfiguration: () => prompts.select({
+      ...io,
+      message: "Choose an experiment configuration",
+      initialValue: "smoke-v2" as const,
+      options: [
+        { value: "smoke-v2" as const, label: "Smoke v2", hint: "24 jobs, recommended first run" },
+        { value: "full-v2" as const, label: "Full v2", hint: "450 jobs" },
+        { value: "custom" as const, label: "Custom configuration" },
+      ],
+    }),
+    requestCustomConfigPath: async () => {
+      const value = await prompts.text({
+        ...io,
+        message: "Configuration file",
+        placeholder: "config/custom.json",
+        validate: (candidate) => {
+          const result = CliPathSchema.safeParse(candidate);
+          return result.success ? undefined : result.error.issues[0]?.message ?? "Enter a configuration path";
+        },
+      });
+      return typeof value === "symbol" ? value : CliPathSchema.parse(value);
+    },
+    showPreflight: (summary) => prompts.note(summary, "Run preflight", { output: process.stderr }),
+    confirmRun: () => prompts.confirm({
+      ...io,
+      message: "Start this paid Anthropic evaluation?",
+      initialValue: false,
+    }),
+  };
+}
+
+async function report(options: Extract<CliArguments, { command: "report" }>): Promise<void> {
+  const rawPath = options.rawPath ?? "runs/results.jsonl";
+  const outputDirectory = options.outputPath ?? "reports/generated";
+  const configPath = options.configPath ?? "config/full.v2.json";
+  const config = await loadExperimentConfig(configPath);
+  const dataset = await loadDataset(`${config.dataset}/manifest.json`);
+  const rawText = await readFile(rawPath, "utf8");
+  const runs = rawText.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as RawRun);
+  const pricing = await loadPricingConfig(config.pricing);
+  const manifest: RunManifest = {
+    commitSha: process.env.GITHUB_SHA ?? "local",
+    datasetHash: dataset.hash,
+    configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
+    promptVersion: config.promptVersion,
+    resourceVersion: config.resourceVersion,
+    models: [...new Set(runs.flatMap(({ modelIds }) => modelIds ?? []))],
+    repeatCount: config.repeats,
+    seed: config.seed,
+    nodeVersion: process.version,
+    lockfileVersion: "pnpm-lock.yaml",
+    pricingVersion: pricing.version,
+    pricingEffectiveDate: pricing.effectiveDate,
+    startedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString(),
+    rawResultReferences: [rawPath],
+  };
+  await writeReport(outputDirectory, runs, dataset.cases, manifest);
+}
+
+async function runEntrypoint(): Promise<void> {
+  await main(process.argv.slice(2));
+}
+
+function handleCliError(error: unknown): void {
+  if (error instanceof GuidedRunDeclinedError) return;
+  if (error instanceof GuidedRunCancelledError) {
+    process.exitCode = error.exitCode;
+    return;
+  }
+  const message = error instanceof z.ZodError
+    ? `Invalid CLI arguments: ${error.issues.map((issue) => `${issue.path.join(".") || "arguments"}: ${issue.message}`).join("; ")}`
+    : error instanceof Error ? error.message : String(error);
+  process.stderr.write(`${message}\n`);
   process.exitCode = 1;
-});
+}
+
+const entrypoint = process.argv[1];
+if (entrypoint && realpathSync(entrypoint) === realpathSync(fileURLToPath(import.meta.url))) {
+  runEntrypoint().catch(handleCliError);
+}

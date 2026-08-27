@@ -49,7 +49,9 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
   const modelIds: string[] = [];
   const emit = async (type: RunnerEvent['type'], payload: Record<string, unknown>) => { const event = { sequence: events.length + 1, type, at: new Date().toISOString(), payload: { runId: input.runId ?? `${input.caseId}:${input.seed}`, ...payload } } as const; events.push(event); await input.telemetry?.emit(event); };
   const abort = new AbortController();
-  input.signal?.addEventListener('abort', () => abort.abort(input.signal?.reason), { once: true });
+  const relayParentAbort = (): void => abort.abort(input.signal?.reason);
+  if (input.signal?.aborted) relayParentAbort();
+  else input.signal?.addEventListener('abort', relayParentAbort, { once: true });
   const deadline = setTimeout(() => abort.abort(new Error('Agent deadline exceeded')), input.policy.deadlineMs);
   try {
     for (let iteration = 1; iteration <= input.policy.maxIterations; iteration += 1) {
@@ -67,6 +69,8 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       messages.push({ role: 'assistant', content: JSON.stringify({ text: response.text, toolCalls: response.toolCalls }) });
       if (response.toolCalls.length > 0) {
         for (const call of response.toolCalls) {
+          if (input.signal?.aborted) throw abortFailure(input.signal);
+          if (abort.signal.aborted) return boundedError('Deadline exceeded', state, events, tokens, costUsd, modelIds, started);
           toolCalls += 1;
           if (toolCalls > input.policy.maxToolCalls) return boundedError('Tool call ceiling exceeded', state, events, tokens, costUsd, modelIds, started);
           const tool = input.tools.find((candidate) => candidate.name === call.name);
@@ -74,7 +78,9 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
           const invocation = (invocations.get(call.name) ?? 0) + 1;
           invocations.set(call.name, invocation);
           const toolAbort = new AbortController();
-          abort.signal.addEventListener('abort', () => toolAbort.abort(abort.signal.reason), { once: true });
+          const relayToolAbort = (): void => toolAbort.abort(abort.signal.reason);
+          if (abort.signal.aborted) relayToolAbort();
+          else abort.signal.addEventListener('abort', relayToolAbort, { once: true });
           const timer = setTimeout(() => toolAbort.abort(new Error('Tool timeout')), input.policy.toolTimeoutMs);
           try {
             const rawResult = await Promise.race([tool.execute(call.input, { caseId: input.caseId, seed: input.seed, invocation, state, signal: toolAbort.signal }), new Promise<never>((_, reject) => toolAbort.signal.addEventListener('abort', () => reject(toolAbort.signal.reason), { once: true }))]);
@@ -83,12 +89,13 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
             await emit('tool', { name: call.name, invocation, input: call.input, result });
             messages.push({ role: 'tool', toolCallId: call.id, content: JSON.stringify(result) });
           } catch (error) {
+            if (input.signal?.aborted) throw abortFailure(input.signal);
             const timedOut = toolAbort.signal.aborted;
             const result = runnerFailure(input.caseId, call.name, invocation, timedOut ? 'TIMEOUT' : 'INVALID_RESPONSE', error instanceof Error ? error.message : String(error), timedOut);
             await emit('error', { name: call.name, message: error instanceof Error ? error.message : String(error) });
             await emit('tool', { name: call.name, invocation, input: call.input, result });
             messages.push({ role: 'tool', toolCallId: call.id, content: JSON.stringify(result) });
-          } finally { clearTimeout(timer); }
+          } finally { clearTimeout(timer); abort.signal.removeEventListener('abort', relayToolAbort); }
         }
         continue;
       }
@@ -107,13 +114,17 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       return { ...parsed.data, finalState: finalState(state), usage: { tokens, costUsd }, modelIds, events, latencyMs: performance.now() - started };
     }
     return boundedError('Iteration ceiling exceeded', state, events, tokens, costUsd, modelIds, started);
-  } finally { clearTimeout(deadline); }
+  } finally { clearTimeout(deadline); input.signal?.removeEventListener('abort', relayParentAbort); }
 }
 
 function safeJson(text: string): unknown {
   const trimmed = text.trim();
   const fenced = /^```(?:json)?\s*\n([\s\S]*?)\n```$/u.exec(trimmed);
   try { return JSON.parse(fenced?.[1] ?? trimmed); } catch { return null; }
+}
+
+function abortFailure(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new DOMException("Agent cancelled", "AbortError");
 }
 
 function runnerFailure(caseId: string, tool: string, invocation: number, code: 'TIMEOUT' | 'INVALID_RESPONSE', message: string, retryable: boolean): ToolEnvelope {

@@ -38,6 +38,14 @@ Run a live smoke experiment with a strict two-dollar ceiling:
 ANTHROPIC_API_KEY=... pnpm benchmark --config config/smoke.v2.json --output runs/smoke-v2.jsonl
 ```
 
+For a guided local run with a configuration picker, spend preflight, unique output files, and live progress:
+
+```sh
+ANTHROPIC_API_KEY=... pnpm benchmark:interactive
+```
+
+Guided mode defaults to Smoke v2 and can also launch Full v2 or a custom validated configuration. It never requests or displays the Anthropic API key. Use `--config`, `--output`, or `--events` with `pnpm benchmark:interactive -- ...` to prefill individual choices. Guided runs refuse existing artifact paths instead of appending to them.
+
 Run the complete live benchmark only after reviewing a clean smoke result:
 
 ```sh
@@ -46,6 +54,10 @@ pnpm report --raw runs/results.jsonl --config config/full.v2.json --output repor
 ```
 
 The CLI defaults to `datasets/v2/manifest.json` and `config/full.v2.json` when the corresponding option is omitted.
+
+Live runs use `--progress auto` by default. Interactive terminals receive an updating progress display with job, phase, elapsed time, ETA, spend, and outcome counts. CI and non-interactive terminals receive durable plain-text progress lines. Use `--progress plain` to force those lines or `--progress quiet` to suppress progress. Progress is written to stderr so stdout remains available for stable command output.
+
+Press Ctrl+C once to cancel gracefully. The active provider request is aborted, completed JSONL rows are preserved, telemetry is flushed, and the command exits with status 130. A second Ctrl+C forces immediate termination.
 
 Raw runs and append-only telemetry are written locally. Provider request IDs, API keys, and observability secrets are never included. Optional Langfuse export activates only when `LANGFUSE_PUBLIC_KEY`, `LANGFUSE_SECRET_KEY`, and `LANGFUSE_BASE_URL` are all present. Local JSONL remains the scoring source of truth.
 
