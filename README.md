@@ -32,24 +32,32 @@ Run the fully mocked benchmark without credentials:
 pnpm benchmark:mock
 ```
 
+For live runs, create `.env.local` from `.env.example`, open it in your editor, and set the key there:
+
+```dotenv
+ANTHROPIC_API_KEY=your_key_here
+```
+
+The repository ignores `.env.local`. Optionally restrict the file to your user with `chmod 600 .env.local`. Do not place the key directly in a command, where it can be retained in shell history. Node's `--env-file` option loads the key only into the benchmark process.
+
 Run a live smoke experiment with a strict two-dollar ceiling:
 
 ```sh
-ANTHROPIC_API_KEY=... pnpm benchmark --config config/smoke.v2.json --output runs/smoke-v2.jsonl
+node --env-file=.env.local --import tsx src/cli.ts run --config config/smoke.v2.json --output runs/smoke-v2.jsonl
 ```
 
 For a guided local run with a configuration picker, spend preflight, unique output files, and live progress:
 
 ```sh
-ANTHROPIC_API_KEY=... pnpm benchmark:interactive
+node --env-file=.env.local --import tsx src/cli.ts run --interactive
 ```
 
-Guided mode defaults to Smoke v2 and can also launch Full v2 or a custom validated configuration. It never requests or displays the Anthropic API key. Use `--config`, `--output`, or `--events` with `pnpm benchmark:interactive -- ...` to prefill individual choices. Guided runs refuse existing artifact paths instead of appending to them.
+Guided mode defaults to Smoke v2 and can also launch Full v2 or a custom validated configuration. It never requests or displays the Anthropic API key. Add `--config`, `--output`, or `--events` to the command above to prefill individual choices. Guided runs refuse existing artifact paths instead of appending to them.
 
 Run the complete live benchmark only after reviewing a clean smoke result:
 
 ```sh
-ANTHROPIC_API_KEY=... pnpm benchmark --config config/full.v2.json --output runs/results.jsonl
+node --env-file=.env.local --import tsx src/cli.ts run --config config/full.v2.json --output runs/results.jsonl
 pnpm report --raw runs/results.jsonl --config config/full.v2.json --output reports/generated
 ```
 

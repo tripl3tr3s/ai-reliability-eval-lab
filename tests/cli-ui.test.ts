@@ -6,6 +6,8 @@ import {
   createInteractiveArtifactPaths,
   createProgressRenderer,
   formatProgressSnapshot,
+  INTERACTIVE_SPINNER_DELAY_MS,
+  INTERACTIVE_SPINNER_FRAMES,
   initialProgressSnapshot,
   reduceProgressSnapshot,
   reserveInteractiveArtifactPaths,
@@ -31,6 +33,24 @@ const job = {
 } as const;
 
 describe("CLI progress UI", () => {
+  it("uses a smooth, fixed-width spinner animation for interactive runs", () => {
+    expect(INTERACTIVE_SPINNER_FRAMES).toEqual([
+      "⠋",
+      "⠙",
+      "⠹",
+      "⠸",
+      "⠼",
+      "⠴",
+      "⠦",
+      "⠧",
+      "⠇",
+      "⠏",
+    ]);
+    expect(new Set(INTERACTIVE_SPINNER_FRAMES)).toHaveLength(10);
+    expect(INTERACTIVE_SPINNER_FRAMES.every((frame) => [...frame].length === 1)).toBe(true);
+    expect(INTERACTIVE_SPINNER_DELAY_MS).toBe(70);
+  });
+
   it("resolves automatic progress for TTY, CI, NO_COLOR, and quiet modes", () => {
     expect(resolveProgressMode({ requested: "auto", isTTY: true, isCI: false, noColor: false })).toBe("interactive");
     expect(resolveProgressMode({ requested: "auto", isTTY: true, isCI: true, noColor: false })).toBe("plain");

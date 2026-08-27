@@ -7,6 +7,20 @@ export const PROGRESS_MODES = ["auto", "plain", "quiet"] as const;
 export type ProgressMode = (typeof PROGRESS_MODES)[number];
 export type ResolvedProgressMode = "interactive" | Exclude<ProgressMode, "auto">;
 
+export const INTERACTIVE_SPINNER_FRAMES = [
+  "⠋",
+  "⠙",
+  "⠹",
+  "⠸",
+  "⠼",
+  "⠴",
+  "⠦",
+  "⠧",
+  "⠇",
+  "⠏",
+] as const;
+export const INTERACTIVE_SPINNER_DELAY_MS = 70;
+
 export const EXPERIMENT_PHASES = ["routing", "model", "tool", "scoring", "persistence"] as const;
 export type ExperimentPhase = (typeof EXPERIMENT_PHASES)[number];
 export type RunOutcome = "completed" | "abstained" | "bounded" | "failed";
@@ -318,7 +332,14 @@ export async function reserveInteractiveArtifactPaths(artifacts: ArtifactPaths):
 }
 
 function createClackControl(max: number, output: OutputStream): ProgressControl {
-  return progress({ max, output: output as Writable, indicator: "timer", style: "heavy" });
+  return progress({
+    max,
+    output: output as Writable,
+    indicator: "timer",
+    style: "heavy",
+    frames: [...INTERACTIVE_SPINNER_FRAMES],
+    delay: INTERACTIVE_SPINNER_DELAY_MS,
+  });
 }
 
 function formatPlainEvent(event: CliProgressEvent): string | null {
