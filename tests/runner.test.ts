@@ -108,4 +108,34 @@ describe('bounded runner', () => {
     expect(result.outcome).toBe('bounded');
     expect(result.answer).toContain('Deadline exceeded');
   });
+  it('keeps an agent deadline that fires during an in-flight model call as a bounded outcome', async () => {
+    // Mirrors the Anthropic SDK: an aborted request rejects with "Request was aborted." instead of the signal reason.
+    let call = 0;
+    const adapter: ModelAdapter = {
+      async generate(request) {
+        call += 1;
+        if (call === 1) return response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] });
+        return new Promise<never>((_resolve, reject) => request.signal?.addEventListener('abort', () => reject(new Error('Request was aborted.')), { once: true }));
+      },
+    };
+    const result = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(), policy: { ...DEFAULT_AGENT_POLICY, deadlineMs: 50, allowedTools: ['get_document'] } });
+    expect(result.outcome).toBe('bounded');
+    expect(result.answer).toContain('Deadline exceeded');
+    expect(result.usage.costUsd).toBeCloseTo(0.001);
+    expect(result.events).toContainEqual(expect.objectContaining({ type: 'error', payload: expect.objectContaining({ phase: 'model', message: 'Request was aborted.' }) }));
+  });
+  it('propagates a parent cancellation that fires during an in-flight model call', async () => {
+    const controller = new AbortController();
+    const adapter: ModelAdapter = {
+      async generate(request) {
+        queueMicrotask(() => controller.abort(new Error('cancelled during model call')));
+        return new Promise<never>((_resolve, reject) => request.signal?.addEventListener('abort', () => reject(new Error('Request was aborted.')), { once: true }));
+      },
+    };
+    await expect(runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] }, signal: controller.signal })).rejects.toThrow('cancelled during model call');
+  });
+  it('propagates model failures that are not caused by the agent deadline', async () => {
+    const adapter: ModelAdapter = { async generate() { throw new Error('529 overloaded'); } };
+    await expect(runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] } })).rejects.toThrow('529 overloaded');
+  });
 });

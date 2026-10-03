@@ -57,7 +57,16 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
     for (let iteration = 1; iteration <= input.policy.maxIterations; iteration += 1) {
       if (abort.signal.aborted || performance.now() - started >= input.policy.deadlineMs) return boundedError('Deadline exceeded', state, events, tokens, costUsd, modelIds, started);
       const perCallOutputLimit = input.model === ANTHROPIC_MODELS.sonnet ? 8_192 : 4_096;
-      const response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(input.model === ANTHROPIC_MODELS.haiku ? { temperature: 0 } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
+      let response: Awaited<ReturnType<ModelAdapter['generate']>>;
+      try {
+        response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(input.model === ANTHROPIC_MODELS.haiku ? { temperature: 0 } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
+      } catch (error) {
+        if (input.signal?.aborted) throw abortFailure(input.signal);
+        // The provider SDK rejects with its own abort error, so the deadline is detected from our signal, not the error.
+        if (!abort.signal.aborted) throw error;
+        await emit('error', { phase: 'model', iteration, message: error instanceof Error ? error.message : String(error) });
+        return boundedError('Deadline exceeded', state, events, tokens, costUsd, modelIds, started);
+      }
       tokens += response.usage.inputTokens + response.usage.outputTokens;
       costUsd += response.usage.costUsd;
       modelIds.push(response.modelId);
