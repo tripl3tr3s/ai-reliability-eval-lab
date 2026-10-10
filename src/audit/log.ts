@@ -57,22 +57,37 @@ export interface AuditIssue { readonly line: number; readonly problem: string }
 export interface AuditVerification {
   readonly valid: boolean;
   readonly entries: number;
-  /** Hash of the last entry. Record it outside the log: a chain cannot reveal that its own tail was cut off. */
+  /** Hash of the last valid entry. Record it outside the log: a chain cannot reveal that its own tail was cut off. */
   readonly headHash: string;
   readonly issues: readonly AuditIssue[];
 }
 
+export interface VerifyOptions {
+  /** Hash of the last entry as recorded outside the log. Detects truncation and wholesale replacement. */
+  readonly expectedHeadHash?: string;
+  /** Only the writer sets this, to start a new chain. A reader must treat an empty log as a failure. */
+  readonly allowEmpty?: boolean;
+}
+
 /**
  * Verifies a JSONL audit log. Any modified, inserted, deleted, or reordered line breaks either an entry's
- * own hash or the link to its predecessor. Pass `expectedHeadHash` to also detect truncation at the end.
+ * own hash or the link to its predecessor.
+ *
+ * Verification fails closed:
+ * - an empty log is invalid, because a deleted log would otherwise look clean;
+ * - every line must be byte-identical to the canonical serialization of the entry it parses to, so
+ *   duplicate keys, reordered keys, extra whitespace, or alternative escapes cannot make two readers
+ *   see different content behind one valid hash;
+ * - blank lines are only accepted as the final line terminator.
  */
-export function verifyAuditLog(text: string, expectedHeadHash?: string): AuditVerification {
+export function verifyAuditLog(text: string, options: VerifyOptions = {}): AuditVerification {
   const issues: AuditIssue[] = [];
   let previousHash = GENESIS_HASH;
   let expectedSequence = 0;
   let entries = 0;
-  for (const [index, line] of text.split(/\r?\n/u).entries()) {
-    if (line.length === 0) continue;
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  for (const [index, line] of lines.entries()) {
     const lineNumber = index + 1;
     let entry: AuditEntry;
     try {
@@ -83,13 +98,17 @@ export function verifyAuditLog(text: string, expectedHeadHash?: string): AuditVe
     }
     entries += 1;
     const { hash, ...body } = entry;
+    if (canonicalJson(entry) !== line) issues.push({ line: lineNumber, problem: "is not in canonical form (bytes differ from the entry they parse to)" });
     if (sha256Canonical(body) !== hash) issues.push({ line: lineNumber, problem: "content does not match its hash (entry was modified)" });
     if (entry.previousHash !== previousHash) issues.push({ line: lineNumber, problem: "does not link to the previous entry (an entry was removed, inserted, or reordered)" });
     if (entry.sequence !== expectedSequence) issues.push({ line: lineNumber, problem: `sequence ${entry.sequence} where ${expectedSequence} was expected` });
     previousHash = hash;
     expectedSequence = entry.sequence + 1;
   }
-  if (expectedHeadHash !== undefined && expectedHeadHash !== previousHash) {
+  if (entries === 0 && issues.length === 0 && !options.allowEmpty) {
+    issues.push({ line: 0, problem: "the log is empty or missing, which is indistinguishable from a deleted log" });
+  }
+  if (options.expectedHeadHash !== undefined && options.expectedHeadHash !== previousHash) {
     issues.push({ line: 0, problem: "head hash does not match the expected value (the log was truncated or replaced)" });
   }
   return { valid: issues.length === 0, entries, headHash: previousHash, issues };
@@ -104,18 +123,19 @@ export class AuditLog {
 
   async append(event: AuditEvent): Promise<AuditEntry> {
     const existing = await this.read();
-    const check = verifyAuditLog(existing);
+    const check = verifyAuditLog(existing, { allowEmpty: true });
     if (!check.valid) throw new Error(`Refusing to append to a log that fails verification (${check.issues[0]!.problem})`);
-    const lines = existing.split(/\r?\n/u).filter((line) => line.length > 0);
+    const lines = existing.split("\n").filter((line) => line.length > 0);
     const last = lines.length === 0 ? null : EntrySchema.parse(JSON.parse(lines.at(-1)!));
     const entry = chainEntry(last, event, this.now().toISOString());
     await mkdir(dirname(this.path), { recursive: true });
-    await appendFile(this.path, `${JSON.stringify(entry)}\n`, "utf8");
+    await appendFile(this.path, `${canonicalJson(entry)}\n`, "utf8");
     return entry;
   }
 
+  /** Verifies the file. A missing or empty file fails, as does any line that is not canonical. */
   async verify(expectedHeadHash?: string): Promise<AuditVerification> {
-    return verifyAuditLog(await this.read(), expectedHeadHash);
+    return verifyAuditLog(await this.read(), expectedHeadHash === undefined ? {} : { expectedHeadHash });
   }
 
   private async read(): Promise<string> {

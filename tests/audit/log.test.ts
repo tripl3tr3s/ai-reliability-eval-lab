@@ -55,6 +55,7 @@ describe("hash-chained audit log", () => {
   it("detects a modified line", async () => {
     const { lines } = await logWith(4);
     const tampered = [...lines];
+    expect(tampered[1]).toContain('"index":1');
     tampered[1] = tampered[1]!.replace('"index":1', '"index":7');
     const result = verifyAuditLog(join_(tampered));
     expect(result.valid).toBe(false);
@@ -67,7 +68,7 @@ describe("hash-chained audit log", () => {
     void _discarded;
     const forgedBody = { ...body, details: { index: 7 } };
     const forged = [...lines];
-    forged[1] = JSON.stringify({ ...forgedBody, hash: sha256Canonical(forgedBody) });
+    forged[1] = canonicalJson({ ...forgedBody, hash: sha256Canonical(forgedBody) });
     const result = verifyAuditLog(join_(forged));
     expect(result.valid).toBe(false);
     expect(result.issues).toEqual([{ line: 3, problem: expect.stringContaining("does not link") }]);
@@ -84,7 +85,7 @@ describe("hash-chained audit log", () => {
   it("detects reordered lines and an inserted line", async () => {
     const { lines } = await logWith(4);
     expect(verifyAuditLog(join_([lines[0]!, lines[2]!, lines[1]!, lines[3]!])).valid).toBe(false);
-    const inserted = JSON.stringify(chainEntry(null, event(9), "2026-10-10T00:00:09.000Z"));
+    const inserted = canonicalJson(chainEntry(null, event(9), "2026-10-10T00:00:09.000Z"));
     expect(verifyAuditLog(join_([lines[0]!, inserted, lines[1]!])).valid).toBe(false);
     expect(verifyAuditLog(join_([lines[0]!, "not json", lines[1]!])).issues).toEqual([{ line: 2, problem: "not a valid audit entry" }]);
   });
@@ -94,13 +95,34 @@ describe("hash-chained audit log", () => {
     const head = (JSON.parse(lines[3]!) as { hash: string }).hash;
     const truncated = join_(lines.slice(0, 3));
     expect(verifyAuditLog(truncated).valid).toBe(true);
-    expect(verifyAuditLog(truncated, head)).toMatchObject({ valid: false, issues: [{ line: 0, problem: expect.stringContaining("truncated") }] });
-    expect(verifyAuditLog(join_(lines), head).valid).toBe(true);
+    expect(verifyAuditLog(truncated, { expectedHeadHash: head })).toMatchObject({ valid: false, issues: [{ line: 0, problem: expect.stringContaining("truncated") }] });
+    expect(verifyAuditLog(join_(lines), { expectedHeadHash: head }).valid).toBe(true);
   });
 
-  it("treats an empty or missing log as a valid empty chain and refuses to extend a broken one", async () => {
-    expect(verifyAuditLog("")).toEqual({ valid: true, entries: 0, headHash: GENESIS_HASH, issues: [] });
-    expect(await new AuditLog(await temp()).verify()).toMatchObject({ valid: true, entries: 0 });
+  it("fails closed on an empty or missing log, since a deleted log looks the same", async () => {
+    expect(verifyAuditLog("")).toMatchObject({ valid: false, entries: 0, headHash: GENESIS_HASH, issues: [{ line: 0, problem: expect.stringContaining("empty or missing") }] });
+    expect(verifyAuditLog("\n").valid).toBe(false);
+    expect(await new AuditLog(await temp()).verify()).toMatchObject({ valid: false, entries: 0 });
+    expect(verifyAuditLog("", { allowEmpty: true })).toEqual({ valid: true, entries: 0, headHash: GENESIS_HASH, issues: [] });
+  });
+
+  it("rejects lines whose bytes differ from the entry they parse to", async () => {
+    const { lines } = await logWith(3);
+    const withLine = (replacement: string) => verifyAuditLog(join_([lines[0]!, replacement, lines[2]!]));
+    const canonical = { valid: false, issues: [{ line: 2, problem: expect.stringContaining("not in canonical form") }] };
+    // Duplicate key: JSON.parse keeps the last value, other readers may keep the first.
+    const duplicated = lines[1]!.replace('{"dataHashes"', '{"eventType":"forged_event","dataHashes"');
+    expect(JSON.parse(duplicated)).toEqual(JSON.parse(lines[1]!));
+    expect(withLine(duplicated)).toMatchObject(canonical);
+    expect(withLine(lines[1]!.replace('"sequence":1', '"sequence": 1'))).toMatchObject(canonical);
+    expect(withLine(lines[1]!.replace('"sequence":1', '"sequence":1.0'))).toMatchObject(canonical);
+    expect(withLine(lines[1]!.replace("test_event", "test\\u005fevent"))).toMatchObject(canonical);
+    expect(withLine(JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(lines[1]!) as Record<string, unknown>).reverse())))).toMatchObject(canonical);
+    expect(verifyAuditLog(`${lines[0]}\r\n${lines[1]}\r\n`).valid).toBe(false);
+    expect(verifyAuditLog(`${lines[0]}\n\n${lines[1]}\n${lines[2]}\n`).issues).toEqual([{ line: 2, problem: "not a valid audit entry" }]);
+  });
+
+  it("refuses to extend a log that fails verification", async () => {
     const { path, lines } = await logWith(2);
     await writeFile(path, join_([lines[0]!.replace('"index":0', '"index":5'), lines[1]!]));
     await expect(new AuditLog(path).append(event(2))).rejects.toThrow(/fails verification/u);
@@ -145,5 +167,9 @@ describe("audit trail of gate decisions", () => {
     const tampered = await cli("audit-verify", "--log", auditLogPath);
     expect(tampered).toMatchObject({ code: 1 });
     expect(tampered.stdout).toContain("line 2: content does not match its hash");
+    const missing = await cli("audit-verify", "--log", join(root, "does-not-exist.jsonl"));
+    expect(missing).toMatchObject({ code: 1 });
+    expect(missing.stdout).toContain("FAILED verification");
+    expect(missing.stdout).toContain("empty or missing");
   }, 60_000);
 });
