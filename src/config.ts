@@ -1,6 +1,9 @@
 import { z } from "zod";
-import { ANTHROPIC_MODELS } from "./adapter.js";
-import type { AgentPolicy } from "./contracts.js";
+import { ANTHROPIC_MODEL_ROLES, ANTHROPIC_MODELS } from "./adapter.js";
+import type { AgentPolicy, ModelRoles } from "./contracts.js";
+
+/** Models the published benchmark pins. Other providers supply their own roles through the adapter factory. */
+export const DEFAULT_MODEL_ROLES: ModelRoles = ANTHROPIC_MODEL_ROLES;
 
 export const CONFIGURATION_IDS = ["direct-sonnet", "routed", "no-resource-injection"] as const;
 export type ConfigurationId = (typeof CONFIGURATION_IDS)[number];
@@ -83,6 +86,7 @@ export const AGENT_CONFIGURATIONS: Readonly<Record<ConfigurationId, AgentConfigu
 
 export function modelForRoutedTask(
   complexity: "simple-read-only" | "multi-step" | "recovery" | "simulated-write",
+  roles: ModelRoles = DEFAULT_MODEL_ROLES,
 ): string {
-  return complexity === "simple-read-only" ? ANTHROPIC_MODELS.haiku : ANTHROPIC_MODELS.sonnet;
+  return complexity === "simple-read-only" ? roles.simpleExecutor : roles.executor;
 }

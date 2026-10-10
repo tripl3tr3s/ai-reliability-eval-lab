@@ -1,15 +1,15 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { AgentPolicy, ModelAdapter, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
-import { ANTHROPIC_MODELS } from "./adapter.js";
-import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, modelForRoutedTask } from "./config.js";
+import type { AgentPolicy, ModelAdapter, ModelRoles, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
+import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, modelForRoutedTask } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
 import type { FaultKind } from "./faults.js";
 import { FINAL_RESULT_INSTRUCTION, runAgent } from "./runner.js";
 import { scoreRun, type RawRun, type ScoredToolCall } from "./scoring.js";
 import { createSyntheticTools } from "./tools.js";
 import { operationalResourceText } from "./fixtures.js";
+import { capabilitiesFor, wrapAdapter } from "./providers/capabilities.js";
 
 const ExperimentFileSchema = z.object({
   dataset: z.string().min(1),
@@ -107,6 +107,8 @@ export interface RunExperimentInput {
   readonly onProgress?: (event: ExperimentProgressEvent) => void | Promise<void>;
   /** Overrides for the per-run agent policy. Used by mock runs to shorten tool timeouts. */
   readonly policyOverrides?: Partial<AgentPolicy>;
+  /** Model ids per role. Defaults to the pinned benchmark models. */
+  readonly models?: ModelRoles;
 }
 
 export async function planExperiment(config: ExperimentFile): Promise<ExperimentPlan> {
@@ -177,8 +179,7 @@ export async function runExperiment(input: RunExperimentInput): Promise<readonly
         currentPhase = value;
         await emitProgress({ type: "phase_changed", ...eventFields, phase: value, elapsedMs: performance.now() - started, observedCostUsd: observedSpend });
       };
-      const meteredAdapter: ModelAdapter = {
-        async generate(request) {
+      const meteredAdapter = wrapAdapter(input.adapter, async (request) => {
           const response = await input.adapter.generate(request);
           observedSpend += response.usage.costUsd;
           await emitProgress({
@@ -192,9 +193,8 @@ export async function runExperiment(input: RunExperimentInput): Promise<readonly
             throw new Error(`Observed spend exceeds ceiling ${budgetCeilingUsd.toFixed(2)}`);
           }
           return response;
-        },
-      };
-      const run = await runOne(job, input.config, meteredAdapter, input.telemetry, input.signal, phase, input.policyOverrides);
+      });
+      const run = await runOne(job, input.config, meteredAdapter, input.telemetry, input.signal, phase, input.policyOverrides, input.models);
       throwIfAborted(input.signal);
       await phase("persistence");
       throwIfAborted(input.signal);
@@ -279,13 +279,14 @@ async function runOne(
   signal?: AbortSignal,
   onPhase?: (phase: ExperimentPhase) => void | Promise<void>,
   policyOverrides: Partial<AgentPolicy> = {},
+  models: ModelRoles = DEFAULT_MODEL_ROLES,
 ): Promise<RawRun> {
   const { datasetCase, configuration, repeat, runId } = job;
   const configured = AGENT_CONFIGURATIONS[configuration];
   if (configuration !== "direct-sonnet") await onPhase?.("routing");
   const routing = configuration === "direct-sonnet"
-    ? { model: ANTHROPIC_MODELS.sonnet, costUsd: 0, tokens: 0, latencyMs: 0, modelId: null }
-    : await routeModel(datasetCase.prompt, adapter, signal);
+    ? { model: models.executor, costUsd: 0, tokens: 0, latencyMs: 0, modelId: null }
+    : await routeModel(datasetCase.prompt, adapter, models, signal);
   const faultMap = new Map(datasetCase.faultSchedule.map((fault) => [
     `${fault.tool}:${fault.invocation}`,
     faultName(fault.type),
@@ -308,12 +309,10 @@ async function runOne(
     ? "Return JSON with outcome, answer, and evidence-linked claims."
     : FINAL_RESULT_INSTRUCTION;
   const policy = { ...DEFAULT_AGENT_POLICY, maxCostUsd: Math.min(DEFAULT_AGENT_POLICY.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
-  const progressAdapter: ModelAdapter = {
-    async generate(request) {
-      await onPhase?.("model");
-      return adapter.generate(request);
-    },
-  };
+  const progressAdapter = wrapAdapter(adapter, async (request) => {
+    await onPhase?.("model");
+    return adapter.generate(request);
+  });
   const result = await runAgent({
     runId,
     caseId: datasetCase.id,
@@ -364,11 +363,11 @@ async function runOne(
   return rawRun;
 }
 
-async function routeModel(prompt: string, adapter: ModelAdapter, signal?: AbortSignal): Promise<{ model: string; costUsd: number; tokens: number; latencyMs: number; modelId: string }> {
+async function routeModel(prompt: string, adapter: ModelAdapter, models: ModelRoles, signal?: AbortSignal): Promise<{ model: string; costUsd: number; tokens: number; latencyMs: number; modelId: string }> {
   throwIfAborted(signal);
   const response = await adapter.generate({
-    model: ANTHROPIC_MODELS.haiku,
-    temperature: 0,
+    model: models.router,
+    ...(capabilitiesFor(adapter, models.router).acceptsTemperature ? { temperature: 0 } : {}),
     maxOutputTokens: 40,
     signal: signal ?? new AbortController().signal,
     tools: [],
@@ -376,7 +375,7 @@ async function routeModel(prompt: string, adapter: ModelAdapter, signal?: AbortS
   });
   const label = response.text.trim();
   return {
-    model: modelForRoutedTask(label === "simple-read-only" || label === "recovery" || label === "simulated-write" ? label : "multi-step"),
+    model: modelForRoutedTask(label === "simple-read-only" || label === "recovery" || label === "simulated-write" ? label : "multi-step", models),
     costUsd: response.usage.costUsd,
     tokens: response.usage.inputTokens + response.usage.outputTokens,
     latencyMs: response.latencyMs,

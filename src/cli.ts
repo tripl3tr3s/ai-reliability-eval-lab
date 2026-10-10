@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import * as prompts from "@clack/prompts";
 import { z } from "zod";
-import { AnthropicAdapter } from "./adapter.js";
 import { CliPathSchema, parseCliArguments, validateRunArtifactTargets, type CliArguments } from "./cli-options.js";
 import {
   createInteractiveArtifactPaths,
@@ -25,11 +24,10 @@ import {
 } from "./guided-run.js";
 import { runMockExperiment } from "./mock/run.js";
 import { loadPricingConfig } from "./pricing.js";
+import { createProviderFromEnvironment } from "./providers/factory.js";
 import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
-
-const ApiKeySchema = z.string().min(1, "ANTHROPIC_API_KEY is required for live execution");
 
 export async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseCliArguments(argv);
@@ -81,9 +79,13 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
   await validateRunArtifactTargets(outputPath, eventsPath);
   const config = guided?.config ?? await loadExperimentConfig(configPath);
   const pricing = await loadPricingConfig(config.pricing);
-  const apiKeyResult = ApiKeySchema.safeParse(process.env.ANTHROPIC_API_KEY);
-  if (!apiKeyResult.success) throw new Error("ANTHROPIC_API_KEY is required for live execution");
-  const apiKey = apiKeyResult.data;
+  const configured = createProviderFromEnvironment(process.env, pricing.perMillionTokens, {
+    createAnthropicClient: (apiKey) => {
+      const anthropic = new Anthropic({ apiKey });
+      return { messages: { create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions) } };
+    },
+    fetch: (url, init) => fetch(url, init),
+  });
   if (options.interactive) {
     await reserveInteractiveArtifactPaths({ resultsPath: outputPath, eventsPath });
   }
@@ -91,7 +93,6 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
     new JsonlTelemetrySink(eventsPath),
     await createLangfuseTelemetry(),
   ]);
-  const anthropic = new Anthropic({ apiKey });
   const resolvedMode = resolveProgressMode({
     requested: options.progress,
     isTTY: Boolean(process.stderr.isTTY),
@@ -109,11 +110,8 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
   try {
     await runExperiment({
       config,
-      adapter: new AnthropicAdapter({
-        messages: {
-          create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions),
-        },
-      }, pricing.perMillionTokens),
+      adapter: configured.adapter,
+      models: configured.models,
       outputPath,
       telemetry,
       signal: runSignal.signal,
