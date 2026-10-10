@@ -56,6 +56,7 @@ describe("thresholds file", () => {
     expect(invalid({ nonInferiority: [] })).toThrow();
     expect(invalid({ nonInferiority: [thresholds.nonInferiority[0], thresholds.nonInferiority[0]] })).toThrow(/only one margin/u);
     expect(invalid({ unexpected: true })).toThrow();
+    expect(invalid({ zeroWidthInterval: { policy: "ignore", rationale: "A long enough rationale for the test." } })).toThrow();
   });
 });
 
@@ -112,6 +113,14 @@ describe("gate decision", () => {
     expect(result.comparisons.map(({ metric, cases, status }) => [metric, cases, status])).toEqual([["completion", 30, "PASS"], ["headlineToolAccuracy", 30, "PASS"], ["recovery", 8, "PASS"]]);
     expect(result.warnings).toHaveLength(3);
     expect(result.warnings[0]).toContain("does not prove non-inferiority");
+  });
+
+  it("refuses to pass on a zero-width interval under the stricter policy", () => {
+    const strict = { ...thresholds, zeroWidthInterval: { ...thresholds.zeroWidthInterval, policy: "inconclusive" as const } };
+    const result = gate(syntheticGrid(dataset.cases), { thresholds: strict });
+    expect(result).toMatchObject({ decision: "INCONCLUSIVE", exitCode: 2, warnings: [] });
+    expect(result.comparisons[0]).toMatchObject({ status: "INCONCLUSIVE", detail: expect.stringContaining("zero width") });
+    expect(gate(regressed(1, 1), { thresholds: strict }).comparisons[0]!.status).toBe("PASS");
   });
 
   it("passes without warnings when a small difference stays inside the margin", () => {

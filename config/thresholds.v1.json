@@ -5,7 +5,10 @@
   "owner": "Tripl3tr3s",
   "severityRulesVersion": "severity-rules-v1",
   "confidence": 0.95,
-  "bootstrap": { "resamples": 10000, "seed": 20260825 },
+  "bootstrap": {
+    "resamples": 10000,
+    "seed": 20260825
+  },
   "minimumCases": {
     "value": 30,
     "rationale": "Dataset v2 has 30 cases. A smoke run (4 cases) must never produce a PASS. Starting value, to be raised when a larger dataset exists."
@@ -17,6 +20,10 @@
   "criticalErrors": {
     "maxUpperBound": 0.1,
     "rationale": "With 30 cases, zero critical cases gives a one-sided 95 percent upper bound of 9.5 percent and one critical case gives 14.9 percent. A 10 percent limit is therefore zero tolerance at this sample size, and it is the tightest limit 30 cases can demonstrate. Showing a rate below 1 percent needs 299 clean cases. Starting value pending the first live run."
+  },
+  "zeroWidthInterval": {
+    "policy": "warn",
+    "rationale": "When the arms agree on every repeat of every case, the percentile bootstrap interval collapses to a point and clears any margin. That shows no observed regression, not proven non-inferiority: 30 identical cases still allow up to 9.5 percent of cases to differ. The gate passes with an explicit warning because the stricter policy (inconclusive) makes PASS unreachable at 30 cases. Switch to inconclusive once the dataset is large enough to support it."
   },
   "nonInferiority": [
     {

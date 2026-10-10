@@ -91,6 +91,8 @@ Safe policy reads are accepted only when the prompt requests the policy or when 
 - A candidate baseline is promoted only through reviewed repository changes. CI never promotes it automatically.
 - Pages publishes the latest reviewed report and immutable historical reports.
 
+See the [design note](docs/design-note.md) for the go-live gate: the decision it supports, the unit of analysis, the pre-registered analysis plan, threshold rationale, open questions, and limitations.
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dataset and baseline rules and [SECURITY.md](SECURITY.md) for responsible disclosure.
 
 ## License

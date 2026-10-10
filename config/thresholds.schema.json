@@ -99,6 +99,27 @@
       ],
       "additionalProperties": false
     },
+    "zeroWidthInterval": {
+      "type": "object",
+      "properties": {
+        "policy": {
+          "type": "string",
+          "enum": [
+            "warn",
+            "inconclusive"
+          ]
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      },
+      "required": [
+        "policy",
+        "rationale"
+      ],
+      "additionalProperties": false
+    },
     "nonInferiority": {
       "type": "array",
       "items": {
@@ -142,6 +163,7 @@
     "minimumCases",
     "deterministicChecks",
     "criticalErrors",
+    "zeroWidthInterval",
     "nonInferiority"
   ],
   "additionalProperties": false,

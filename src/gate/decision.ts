@@ -111,13 +111,14 @@ function compareMetric(
     return { metric, margin, cases: 0, difference: null, interval: null, status: "INCONCLUSIVE", detail: "no cases are scored for this metric in both arms", casesSuggested: null };
   }
   const { estimate, low, high } = bootstrap;
-  const status: GateDecision = high < -margin ? "BLOCK" : low < -margin ? "INCONCLUSIVE" : "PASS";
+  const degenerate = low === high && thresholds.zeroWidthInterval.policy === "inconclusive";
+  const status: GateDecision = high < -margin ? "BLOCK" : low < -margin || degenerate ? "INCONCLUSIVE" : "PASS";
   const headroom = estimate + margin;
   const casesSuggested = status === "INCONCLUSIVE" && headroom > 0 ? Math.ceil(pairs.length * ((estimate - low) / headroom) ** 2) : null;
   const detail = status === "BLOCK"
     ? `the whole interval is below the margin of ${points(-margin)}`
     : status === "INCONCLUSIVE"
-      ? `the interval spans the margin of ${points(-margin)}`
+      ? low < -margin ? `the interval spans the margin of ${points(-margin)}` : "no case differs between the arms, so the interval has zero width and cannot demonstrate the margin"
       : `the lower bound stays above the margin of ${points(-margin)}`;
   return { metric, margin, cases: pairs.length, difference: estimate, interval: { low, high }, status, detail, casesSuggested };
 }

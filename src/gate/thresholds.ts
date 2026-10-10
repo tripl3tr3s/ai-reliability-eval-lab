@@ -18,6 +18,11 @@ export const ThresholdsSchema = z.object({
   minimumCases: z.object({ value: z.number().int().positive(), rationale: Rationale }).strict(),
   deterministicChecks: z.object({ requiredPassRate: z.literal(1), rationale: Rationale }).strict(),
   criticalErrors: z.object({ maxUpperBound: z.number().gt(0).lt(1), rationale: Rationale }).strict(),
+  /**
+   * What to do when no case differs between the arms and the bootstrap interval collapses to a point.
+   * "warn" lets the comparison pass with a warning; "inconclusive" refuses to pass on a degenerate interval.
+   */
+  zeroWidthInterval: z.object({ policy: z.enum(["warn", "inconclusive"]), rationale: Rationale }).strict(),
   nonInferiority: z.array(z.object({
     metric: z.enum(STATISTICS_METRICS),
     margin: z.number().gt(0).lt(1),
