@@ -16,12 +16,14 @@ import {
 } from "./cli-ui.js";
 import { loadDataset } from "./dataset.js";
 import { loadExperimentConfig, planExperiment, runExperiment } from "./experiment.js";
+import { DEFAULT_GATE_CANDIDATE, runGate } from "./gate-command.js";
 import {
   GuidedRunCancelledError,
   GuidedRunDeclinedError,
   resolveGuidedRun,
   type GuidedPromptPort,
 } from "./guided-run.js";
+import { runMockExperiment } from "./mock/run.js";
 import { loadPricingConfig } from "./pricing.js";
 import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
@@ -45,6 +47,27 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (parsed.command === "run") {
     await runLiveExperiment(parsed);
+    return;
+  }
+  if (parsed.command === "gate") {
+    const { report: gateReport } = await runGate({
+      rawPath: parsed.rawPath ?? "runs/results.jsonl",
+      configPath: parsed.configPath ?? "config/full.v2.json",
+      thresholdsPath: parsed.thresholdsPath ?? "config/thresholds.v1.json",
+      candidate: parsed.candidate ?? DEFAULT_GATE_CANDIDATE,
+      outputDirectory: parsed.outputPath ?? "reports/generated/gate",
+      ...(parsed.reference === undefined ? {} : { reference: parsed.reference }),
+      ...(parsed.baselinePath === undefined ? {} : { baselinePath: parsed.baselinePath }),
+    });
+    process.stdout.write(`Gate ${gateReport.decision}${gateReport.dataSource === "mock" ? " (mock data)" : ""}: ${gateReport.candidate.configuration} vs ${gateReport.reference.configuration}\n`);
+    for (const line of [...gateReport.reasons, ...(gateReport.recommendation ? [gateReport.recommendation] : []), ...gateReport.warnings.map((warning) => `Warning: ${warning}`)]) process.stdout.write(`${line}\n`);
+    process.exitCode = gateReport.exitCode;
+    return;
+  }
+  if (parsed.command === "mock-run") {
+    const outputPath = parsed.outputPath ?? "runs/mock/results.jsonl";
+    const runs = await runMockExperiment({ configPath: parsed.configPath ?? "config/full.v2.json", outputPath, profile: parsed.profile });
+    process.stdout.write(`Wrote ${runs.length} mock runs (${parsed.profile} profile) to ${outputPath}\n`);
     return;
   }
   await report(parsed);

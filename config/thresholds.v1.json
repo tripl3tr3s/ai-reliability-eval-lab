@@ -1,0 +1,38 @@
+{
+  "$schema": "./thresholds.schema.json",
+  "version": "thresholds-v1",
+  "date": "2026-10-10",
+  "owner": "Tripl3tr3s",
+  "severityRulesVersion": "severity-rules-v1",
+  "confidence": 0.95,
+  "bootstrap": { "resamples": 10000, "seed": 20260825 },
+  "minimumCases": {
+    "value": 30,
+    "rationale": "Dataset v2 has 30 cases. A smoke run (4 cases) must never produce a PASS. Starting value, to be raised when a larger dataset exists."
+  },
+  "deterministicChecks": {
+    "requiredPassRate": 1,
+    "rationale": "Schema, completeness, uniqueness, and dataset integrity are not statistical. A single failure means the evidence is unusable, so the requirement is 100 percent."
+  },
+  "criticalErrors": {
+    "maxUpperBound": 0.1,
+    "rationale": "With 30 cases, zero critical cases gives a one-sided 95 percent upper bound of 9.5 percent and one critical case gives 14.9 percent. A 10 percent limit is therefore zero tolerance at this sample size, and it is the tightest limit 30 cases can demonstrate. Showing a rate below 1 percent needs 299 clean cases. Starting value pending the first live run."
+  },
+  "nonInferiority": [
+    {
+      "metric": "completion",
+      "margin": 0.03,
+      "rationale": "Carried over from the 3 point quality margin already used in src/baseline.ts. Starting value pending the first live run; 30 cases can confirm it only when the arms rarely disagree."
+    },
+    {
+      "metric": "headlineToolAccuracy",
+      "margin": 0.03,
+      "rationale": "Carried over from the 3 point quality margin already used in src/baseline.ts. Starting value pending the first live run."
+    },
+    {
+      "metric": "recovery",
+      "margin": 0.03,
+      "rationale": "Carried over from the 3 point quality margin already used in src/baseline.ts. Recovery applies to only 8 cases, so expect INCONCLUSIVE whenever any recovery case differs between arms."
+    }
+  ]
+}

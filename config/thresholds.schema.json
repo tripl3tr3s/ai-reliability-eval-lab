@@ -1,0 +1,149 @@
+{
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^thresholds-v\\d+$"
+    },
+    "date": {
+      "type": "string",
+      "format": "date"
+    },
+    "owner": {
+      "type": "string",
+      "minLength": 1
+    },
+    "severityRulesVersion": {
+      "type": "string",
+      "minLength": 1
+    },
+    "confidence": {
+      "type": "number",
+      "exclusiveMinimum": 0.5,
+      "exclusiveMaximum": 1
+    },
+    "bootstrap": {
+      "type": "object",
+      "properties": {
+        "resamples": {
+          "type": "integer",
+          "minimum": 1000,
+          "maximum": 100000
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "resamples",
+        "seed"
+      ],
+      "additionalProperties": false
+    },
+    "minimumCases": {
+      "type": "object",
+      "properties": {
+        "value": {
+          "type": "integer",
+          "exclusiveMinimum": 0
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      },
+      "required": [
+        "value",
+        "rationale"
+      ],
+      "additionalProperties": false
+    },
+    "deterministicChecks": {
+      "type": "object",
+      "properties": {
+        "requiredPassRate": {
+          "type": "number",
+          "const": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      },
+      "required": [
+        "requiredPassRate",
+        "rationale"
+      ],
+      "additionalProperties": false
+    },
+    "criticalErrors": {
+      "type": "object",
+      "properties": {
+        "maxUpperBound": {
+          "type": "number",
+          "exclusiveMinimum": 0,
+          "exclusiveMaximum": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      },
+      "required": [
+        "maxUpperBound",
+        "rationale"
+      ],
+      "additionalProperties": false
+    },
+    "nonInferiority": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "metric": {
+            "type": "string",
+            "enum": [
+              "completion",
+              "headlineToolAccuracy",
+              "recovery"
+            ]
+          },
+          "margin": {
+            "type": "number",
+            "exclusiveMinimum": 0,
+            "exclusiveMaximum": 1
+          },
+          "rationale": {
+            "type": "string",
+            "minLength": 20
+          }
+        },
+        "required": [
+          "metric",
+          "margin",
+          "rationale"
+        ],
+        "additionalProperties": false
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "version",
+    "date",
+    "owner",
+    "severityRulesVersion",
+    "confidence",
+    "bootstrap",
+    "minimumCases",
+    "deterministicChecks",
+    "criticalErrors",
+    "nonInferiority"
+  ],
+  "additionalProperties": false,
+  "$schema": "http://json-schema.org/draft-07/schema#"
+}

@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { DatasetCase } from "./dataset.js";
+import { containsMockRuns } from "./raw-run.js";
 import { computeRunStatistics, statisticsSections, type ReportSection, type RunStatistics } from "./report-statistics.js";
 import { aggregateScores, scoreRun, type ConfigurationSummary, type RawRun, type RunScore } from "./scoring.js";
 
@@ -48,6 +49,7 @@ const sectionMarkdown = (section: ReportSection): string => [
   ].join("\n")),
 ].join("\n\n");
 const sectionHtml = (section: ReportSection): string => `<h2>${escapeHtml(section.title)}</h2>${section.paragraphs.map((text) => `<p>${escapeHtml(text)}</p>`).join("")}${section.tables.map((table) => `<table><caption>${escapeHtml(table.caption)}</caption><thead><tr>${table.head.map((cell) => `<th scope="col">${escapeHtml(cell)}</th>`).join("")}</tr></thead><tbody>${table.rows.map((row) => `<tr>${row.map((cell, index) => index === 0 ? `<th scope="row">${escapeHtml(cell)}</th>` : `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`).join("")}</tbody></table>`).join("")}`;
+export const MOCK_REASON = "Mock data from a scripted model, generated to verify the pipeline. This is not a benchmark result.";
 const ROW_LEVEL_NOTE = "Intervals in this section are row-level bootstraps that treat every run as an independent sample. They are kept for continuity and are too narrow when repeats of a case agree. Use the case-clustered intervals below for decisions.";
 const escapeHtml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
@@ -70,9 +72,10 @@ export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase
     return scoreRun(run, datasetCase);
   });
   const complete = experimentIsComplete(runs, cases, configurations, manifest.repeatCount);
+  const mock = containsMockRuns([...manifest.models, ...runs.flatMap(({ modelIds }) => modelIds ?? [])]);
   const summary: ReportSummary = {
-    status: complete ? "complete" : "pending",
-    reason: complete ? null : "Pending a complete 30-case, three-configuration, five-repeat experiment.",
+    status: complete && !mock ? "complete" : "pending",
+    reason: mock ? MOCK_REASON : complete ? null : "Pending a complete 30-case, three-configuration, five-repeat experiment.",
     manifest,
     configurations: aggregateScores(scores, manifest.seed),
     statistics: computeRunStatistics(scores, runs, manifest.seed),

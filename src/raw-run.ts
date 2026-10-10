@@ -1,6 +1,12 @@
 import { z } from "zod";
 import type { RawRun } from "./scoring.js";
 
+/** Model ids produced by the scripted mock model start with this prefix. */
+export const MOCK_MODEL_PREFIX = "mock-";
+
+/** True when any row was produced by a mock model. Such data must never be presented as a benchmark result. */
+export const containsMockRuns = (modelIds: readonly string[]): boolean => modelIds.some((id) => id.startsWith(MOCK_MODEL_PREFIX));
+
 /** Schema of one raw JSONL run row. Unknown keys are preserved so newer rows stay readable. */
 export const RawRunSchema = z.object({
   runId: z.string().min(1),

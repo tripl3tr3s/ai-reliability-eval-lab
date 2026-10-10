@@ -29,3 +29,4 @@ jobs:
       - run: pnpm build
       - run: pnpm benchmark:mock
       - run: pnpm report:replay
+      - run: pnpm gate:mock

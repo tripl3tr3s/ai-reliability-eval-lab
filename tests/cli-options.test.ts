@@ -54,6 +54,29 @@ describe("CLI argument parsing", () => {
     });
   });
 
+  it("parses the gate and mock-run commands", () => {
+    expect(parseCliArguments(["gate"])).toEqual({ command: "gate" });
+    expect(parseCliArguments(["gate", "--raw", "runs/a.jsonl", "--config", "config/full.v2.json", "--thresholds", "config/thresholds.v1.json", "--candidate", "routed", "--reference", "direct-sonnet", "--baseline", "runs/b.jsonl", "--output", "out"])).toEqual({
+      command: "gate",
+      rawPath: "runs/a.jsonl",
+      configPath: "config/full.v2.json",
+      thresholdsPath: "config/thresholds.v1.json",
+      candidate: "routed",
+      reference: "direct-sonnet",
+      baselinePath: "runs/b.jsonl",
+      outputPath: "out",
+    });
+    expect(() => parseCliArguments(["gate", "--candidate", "Routed; rm"])).toThrow(/lowercase/u);
+    expect(parseCliArguments(["mock-run"])).toEqual({ command: "mock-run", profile: "clean" });
+    expect(parseCliArguments(["mock-run", "--profile", "regressed", "--config", "config/smoke.v2.json", "--output", "runs/mock.jsonl"])).toEqual({
+      command: "mock-run",
+      profile: "regressed",
+      configPath: "config/smoke.v2.json",
+      outputPath: "runs/mock.jsonl",
+    });
+    expect(() => parseCliArguments(["mock-run", "--profile", "live"])).toThrow();
+  });
+
   it("rejects unsupported progress values, options, and commands", () => {
     expect(() => parseCliArguments(["run", "--progress", "rainbow"])).toThrow(/progress/u);
     expect(() => parseCliArguments(["run", "--output", "runs/result\nspoofed.jsonl"])).toThrow(/control characters/u);

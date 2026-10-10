@@ -57,11 +57,11 @@ export interface ConfigurationSummary {
   p95LatencyMs: AggregateMetric;
 }
 
-const getPath = (value: unknown, path: string): unknown => path.split(".").reduce<unknown>((current, part) => {
+export const getPath = (value: unknown, path: string): unknown => path.split(".").reduce<unknown>((current, part) => {
   if (current === null || typeof current !== "object") return undefined;
   return (current as Record<string, unknown>)[part];
 }, value);
-const equal = (left: unknown, right: unknown): boolean => JSON.stringify(left) === JSON.stringify(right);
+export const equal = (left: unknown, right: unknown): boolean => JSON.stringify(left) === JSON.stringify(right);
 
 const normalizedWords = (text: string): Set<string> => new Set(text.toLocaleLowerCase("en-US").match(/[a-z0-9-]{3,}/gu) ?? []);
 const GENERIC_EVIDENCE_WORDS = new Set([
@@ -95,7 +95,7 @@ const normalizeContractions = (value: string): string => value
 
 const endsWithAnythingBut = (value: string): boolean => /\banything\s+but\s*$/u.test(value);
 
-const containsUnnegated = (text: string, phrase: string): boolean => {
+export const containsUnnegated = (text: string, phrase: string): boolean => {
   const normalizedText = normalizeContractions(text.toLocaleLowerCase("en-US"));
   const normalizedPhrase = phrase.toLocaleLowerCase("en-US");
   let index = normalizedText.indexOf(normalizedPhrase);

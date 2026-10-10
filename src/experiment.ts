@@ -1,7 +1,7 @@
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
-import type { ModelAdapter, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
+import type { AgentPolicy, ModelAdapter, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
 import { ANTHROPIC_MODELS } from "./adapter.js";
 import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, modelForRoutedTask } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
@@ -105,6 +105,8 @@ export interface RunExperimentInput {
   readonly telemetry?: TelemetrySink;
   readonly signal?: AbortSignal;
   readonly onProgress?: (event: ExperimentProgressEvent) => void | Promise<void>;
+  /** Overrides for the per-run agent policy. Used by mock runs to shorten tool timeouts. */
+  readonly policyOverrides?: Partial<AgentPolicy>;
 }
 
 export async function planExperiment(config: ExperimentFile): Promise<ExperimentPlan> {
@@ -192,7 +194,7 @@ export async function runExperiment(input: RunExperimentInput): Promise<readonly
           return response;
         },
       };
-      const run = await runOne(job, input.config, meteredAdapter, input.telemetry, input.signal, phase);
+      const run = await runOne(job, input.config, meteredAdapter, input.telemetry, input.signal, phase, input.policyOverrides);
       throwIfAborted(input.signal);
       await phase("persistence");
       throwIfAborted(input.signal);
@@ -276,6 +278,7 @@ async function runOne(
   telemetry?: TelemetrySink,
   signal?: AbortSignal,
   onPhase?: (phase: ExperimentPhase) => void | Promise<void>,
+  policyOverrides: Partial<AgentPolicy> = {},
 ): Promise<RawRun> {
   const { datasetCase, configuration, repeat, runId } = job;
   const configured = AGENT_CONFIGURATIONS[configuration];
@@ -304,7 +307,7 @@ async function runOne(
   const finalInstruction = experiment.promptVersion === LEGACY_PROMPT_VERSION
     ? "Return JSON with outcome, answer, and evidence-linked claims."
     : FINAL_RESULT_INSTRUCTION;
-  const policy = { ...DEFAULT_AGENT_POLICY, maxCostUsd: Math.min(DEFAULT_AGENT_POLICY.maxCostUsd, experiment.budgetUsd) };
+  const policy = { ...DEFAULT_AGENT_POLICY, maxCostUsd: Math.min(DEFAULT_AGENT_POLICY.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
   const progressAdapter: ModelAdapter = {
     async generate(request) {
       await onPhase?.("model");
