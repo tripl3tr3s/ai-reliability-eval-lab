@@ -82,6 +82,7 @@ export type CliArguments =
       readonly rawPath?: string;
       readonly outputPath?: string;
       readonly configPath?: string;
+      readonly eventsPath?: string;
     };
 
 const RunValuesSchema = z.object({
@@ -146,18 +147,21 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
         raw: { type: "string" },
         output: { type: "string" },
         config: { type: "string" },
+        events: { type: "string" },
       },
     });
     const parsed = z.object({
       raw: CliPathSchema.optional(),
       output: CliPathSchema.optional(),
       config: CliPathSchema.optional(),
+      events: CliPathSchema.optional(),
     }).strict().parse(values);
     return {
       command,
       ...(parsed.raw === undefined ? {} : { rawPath: parsed.raw }),
       ...(parsed.output === undefined ? {} : { outputPath: parsed.output }),
       ...(parsed.config === undefined ? {} : { configPath: parsed.config }),
+      ...(parsed.events === undefined ? {} : { eventsPath: parsed.events }),
     };
   }
   throw new Error(CLI_USAGE);

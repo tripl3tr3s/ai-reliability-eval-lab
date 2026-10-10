@@ -16,6 +16,7 @@ export interface RawRun {
   evidenceFacts?: Readonly<Record<string, readonly string[]>>;
   latencyMs: number;
   costUsd: number;
+  tokens?: number;
   modelIds?: readonly string[];
   policyViolation?: boolean;
   duplicateMutation?: boolean;

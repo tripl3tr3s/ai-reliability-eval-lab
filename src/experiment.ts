@@ -281,7 +281,7 @@ async function runOne(
   const configured = AGENT_CONFIGURATIONS[configuration];
   if (configuration !== "direct-sonnet") await onPhase?.("routing");
   const routing = configuration === "direct-sonnet"
-    ? { model: ANTHROPIC_MODELS.sonnet, costUsd: 0, latencyMs: 0, modelId: null }
+    ? { model: ANTHROPIC_MODELS.sonnet, costUsd: 0, tokens: 0, latencyMs: 0, modelId: null }
     : await routeModel(datasetCase.prompt, adapter, signal);
   const faultMap = new Map(datasetCase.faultSchedule.map((fault) => [
     `${fault.tool}:${fault.invocation}`,
@@ -341,6 +341,7 @@ async function runOne(
     evidenceFacts,
     latencyMs: routing.latencyMs + result.latencyMs,
     costUsd: result.usage.costUsd + routing.costUsd,
+    tokens: result.usage.tokens + routing.tokens,
     modelIds: [...(routing.modelId ? [routing.modelId] : []), ...result.modelIds],
     policyViolation: result.outcome === "bounded",
     duplicateMutation: hasDuplicateMutation(result.finalState.followUps),
@@ -360,7 +361,7 @@ async function runOne(
   return rawRun;
 }
 
-async function routeModel(prompt: string, adapter: ModelAdapter, signal?: AbortSignal): Promise<{ model: string; costUsd: number; latencyMs: number; modelId: string }> {
+async function routeModel(prompt: string, adapter: ModelAdapter, signal?: AbortSignal): Promise<{ model: string; costUsd: number; tokens: number; latencyMs: number; modelId: string }> {
   throwIfAborted(signal);
   const response = await adapter.generate({
     model: ANTHROPIC_MODELS.haiku,
@@ -374,6 +375,7 @@ async function routeModel(prompt: string, adapter: ModelAdapter, signal?: AbortS
   return {
     model: modelForRoutedTask(label === "simple-read-only" || label === "recovery" || label === "simulated-write" ? label : "multi-step"),
     costUsd: response.usage.costUsd,
+    tokens: response.usage.inputTokens + response.usage.outputTokens,
     latencyMs: response.latencyMs,
     modelId: response.modelId,
   };

@@ -45,6 +45,13 @@ describe("CLI argument parsing", () => {
       command: "report",
       rawPath: "runs/raw.jsonl",
     });
+    expect(parseCliArguments(["report", "--raw", "runs/raw.jsonl", "--events", "runs/events.jsonl", "--output", "out", "--config", "config/smoke.v2.json"])).toEqual({
+      command: "report",
+      rawPath: "runs/raw.jsonl",
+      eventsPath: "runs/events.jsonl",
+      outputPath: "out",
+      configPath: "config/smoke.v2.json",
+    });
   });
 
   it("rejects unsupported progress values, options, and commands", () => {

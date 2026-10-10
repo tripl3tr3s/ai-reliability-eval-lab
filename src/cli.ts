@@ -1,7 +1,5 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import * as prompts from "@clack/prompts";
@@ -25,9 +23,8 @@ import {
   type GuidedPromptPort,
 } from "./guided-run.js";
 import { loadPricingConfig } from "./pricing.js";
-import { writeReport, type RunManifest } from "./report.js";
+import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
-import type { RawRun } from "./scoring.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
 
 const ApiKeySchema = z.string().min(1, "ANTHROPIC_API_KEY is required for live execution");
@@ -172,32 +169,12 @@ function createGuidedPromptPort(): GuidedPromptPort {
 }
 
 async function report(options: Extract<CliArguments, { command: "report" }>): Promise<void> {
-  const rawPath = options.rawPath ?? "runs/results.jsonl";
-  const outputDirectory = options.outputPath ?? "reports/generated";
-  const configPath = options.configPath ?? "config/full.v2.json";
-  const config = await loadExperimentConfig(configPath);
-  const dataset = await loadDataset(`${config.dataset}/manifest.json`);
-  const rawText = await readFile(rawPath, "utf8");
-  const runs = rawText.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as RawRun);
-  const pricing = await loadPricingConfig(config.pricing);
-  const manifest: RunManifest = {
-    commitSha: process.env.GITHUB_SHA ?? "local",
-    datasetHash: dataset.hash,
-    configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
-    promptVersion: config.promptVersion,
-    resourceVersion: config.resourceVersion,
-    models: [...new Set(runs.flatMap(({ modelIds }) => modelIds ?? []))],
-    repeatCount: config.repeats,
-    seed: config.seed,
-    nodeVersion: process.version,
-    lockfileVersion: "pnpm-lock.yaml",
-    pricingVersion: pricing.version,
-    pricingEffectiveDate: pricing.effectiveDate,
-    startedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-    rawResultReferences: [rawPath],
-  };
-  await writeReport(outputDirectory, runs, dataset.cases, manifest);
+  await generateReport({
+    rawPath: options.rawPath ?? "runs/results.jsonl",
+    outputDirectory: options.outputPath ?? "reports/generated",
+    configPath: options.configPath ?? "config/full.v2.json",
+    ...(options.eventsPath === undefined ? {} : { eventsPath: options.eventsPath }),
+  });
 }
 
 async function runEntrypoint(): Promise<void> {
