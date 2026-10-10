@@ -86,6 +86,36 @@ describe("OpenAI-compatible adapter", () => {
     await expect(adapterWith(async () => ({ ok: true, status: 200, text: async () => "<html>" })).generate(request)).rejects.toMatchObject({ code: "invalid_response", status: 200 });
   });
 
+  it("stops reading a streamed body at the size limit instead of buffering it", async () => {
+    let reads = 0;
+    let cancelled = false;
+    const endless: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => { throw new Error("text() must not be used when a stream is available"); },
+      body: { getReader: () => ({ read: async () => { reads += 1; return { done: false, value: new Uint8Array(400) }; }, cancel: async () => { cancelled = true; } }) },
+    });
+    const adapter = new OpenAiCompatibleAdapter({ baseUrl: "http://localhost/v1", models: ["local-large"], rates, fetch: endless, maxResponseBytes: 1_000 });
+    await expect(adapter.generate(request)).rejects.toMatchObject({ name: "ModelProviderError", code: "invalid_response", message: "OpenAI-compatible response exceeded the size limit" });
+    expect(reads).toBe(3);
+    expect(cancelled).toBe(true);
+  });
+
+  it("reads a streamed body within the limit and bounds unstreamed bodies too", async () => {
+    const payload = JSON.stringify({ model: "local-large", choices: [{ finish_reason: "stop", message: { content: "streamed" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } });
+    const bytes = new TextEncoder().encode(payload);
+    const queue: (Uint8Array | undefined)[] = [bytes.slice(0, 10), undefined, bytes.slice(10)];
+    const streamed: FetchLike = async () => ({
+      ok: true,
+      status: 200,
+      text: async () => "",
+      body: { getReader: () => ({ read: async () => queue.length === 0 ? { done: true } : { done: false, ...(queue[0] === undefined ? {} : { value: queue[0] }), ...(queue.shift(), {}) }, cancel: async () => undefined }) },
+    });
+    expect((await adapterWith(streamed).generate(request)).text).toBe("streamed");
+    const oversized = new OpenAiCompatibleAdapter({ baseUrl: "http://localhost/v1", models: ["local-large"], rates, fetch: wireResponse({ padding: "x".repeat(2_000) }), maxResponseBytes: 1_000 });
+    await expect(oversized.generate(request)).rejects.toMatchObject({ code: "invalid_response", message: "OpenAI-compatible response exceeded the size limit" });
+  });
+
   it("rejects a temperature when configured without temperature support", async () => {
     const fetch = vi.fn();
     const adapter = new OpenAiCompatibleAdapter({ baseUrl: "http://localhost/v1", models: ["local-large"], rates, fetch, acceptsTemperature: false, maxOutputTokensPerCall: 2_000 });

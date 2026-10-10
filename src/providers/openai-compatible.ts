@@ -5,11 +5,43 @@ import { decodeAssistantTurn } from "./assistant-turn.js";
 
 const PROVIDER = "openai-compatible";
 
-export type FetchLike = (url: string, init: { method: "POST"; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<{
+export interface FetchLikeResponse {
   readonly ok: boolean;
   readonly status: number;
+  /** Streamed body. When present it is read chunk by chunk so the size limit applies before buffering. */
+  readonly body?: { getReader(): { read(): Promise<{ done: boolean; value?: Uint8Array | undefined }>; cancel(): Promise<void> } } | null;
   text(): Promise<string>;
-}>;
+}
+export type FetchLike = (url: string, init: { method: "POST"; headers: Record<string, string>; body: string; signal: AbortSignal }) => Promise<FetchLikeResponse>;
+
+/** Default cap on a response body. A chat completion for this benchmark is a few kilobytes. */
+export const DEFAULT_MAX_RESPONSE_BYTES = 1_048_576;
+
+class ResponseTooLargeError extends Error {}
+
+/** Reads a response body without ever holding more than `limit` bytes; stops and cancels the stream at the limit. */
+async function readBounded(response: FetchLikeResponse, limit: number): Promise<string> {
+  const reader = response.body?.getReader();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > limit) throw new ResponseTooLargeError();
+    return text;
+  }
+  const chunks: Uint8Array[] = [];
+  let received = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    received += value.byteLength;
+    if (received > limit) {
+      await reader.cancel().catch(() => undefined);
+      throw new ResponseTooLargeError();
+    }
+    chunks.push(value);
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
 
 export interface OpenAiCompatibleOptions {
   /** Base URL up to and including the version segment, for example http://localhost:11434/v1. */
@@ -23,6 +55,8 @@ export interface OpenAiCompatibleOptions {
   readonly maxTokensField?: "max_tokens" | "max_completion_tokens";
   readonly acceptsTemperature?: boolean;
   readonly maxOutputTokensPerCall?: number;
+  /** Largest response body accepted, in bytes. Larger bodies are rejected without being buffered. */
+  readonly maxResponseBytes?: number;
 }
 
 const ResponseSchema = z.object({
@@ -121,13 +155,16 @@ export class OpenAiCompatibleAdapter implements ModelAdapter {
         signal: request.signal,
       });
       status = response.status;
-      text = await response.text();
+      text = await readBounded(response, this.options.maxResponseBytes ?? DEFAULT_MAX_RESPONSE_BYTES);
       if (!response.ok) {
         // The body can echo request content, so only the status is reported.
         throw new ModelProviderError(`OpenAI-compatible request failed with status ${status}`, { code: providerErrorCodeForStatus(status), provider: PROVIDER, status });
       }
     } catch (error) {
       if (error instanceof ModelProviderError) throw error;
+      if (error instanceof ResponseTooLargeError) {
+        throw new ModelProviderError("OpenAI-compatible response exceeded the size limit", { code: "invalid_response", provider: PROVIDER });
+      }
       const aborted = request.signal.aborted || (error instanceof Error && error.name === "AbortError");
       throw new ModelProviderError(error instanceof Error ? error.message : String(error), { code: aborted ? "aborted" : "server", provider: PROVIDER, cause: error });
     }
