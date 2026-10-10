@@ -4,7 +4,7 @@
 | --- | --- |
 | Date | 2026-10-10 |
 | Verified against | `main` at `eae03bc`, working tree clean except untracked `docs/` |
-| Status | Phase 1 complete (read-only). No source file was edited. Waiting for "go". |
+| Status | Phase 1 and Phase 2 complete on branch `feat/go-live-gate`. Not pushed, not tagged, not merged. See "What changed versus plan" at the end. |
 | Baseline checks | `pnpm validate`, `pnpm test:coverage`, `pnpm build`, `pnpm lint` all pass (132 tests, 17 files) |
 
 The plan was written without seeing the code. This document records what the code actually contains, where the plan's assumptions are wrong, and the adjusted approach for each work item.
@@ -223,4 +223,51 @@ Recommendation: **do not move existing files.** A real split means generic state
 
 ## What changed versus plan
 
-To be filled in at the end of Phase 2.
+Written after Phase 2. Sections above are the Phase 1 record and were left as written, including proposals that changed during implementation; the differences are listed here.
+
+### Decisions taken (the Phase 1 defaults, accepted with "go")
+
+| # | Decision | Outcome |
+| --- | --- | --- |
+| 1 | Report intervals | Case-clustered intervals added in new report sections. Existing `ci95` fields kept and labelled row-level |
+| 2 | Tokens | Optional `tokens` on raw rows, routing tokens included, "N/A" for older files |
+| 3 | McNemar outcome | "Every repeat passed" primary, majority as sensitivity check |
+| 4 | Reference constants | Generated with scipy through `uv run --with scipy`; script kept in `tests/stats/reference/scipy_reference.py` |
+| 5 | Boundary | ESLint rule plus `docs/architecture.md`, no file moves |
+| 6 | Spanish README section | None added |
+| 7 | Thresholds | 3 point margins, 10% critical upper bound limit, minimum 30 cases, all marked as starting values |
+
+### Differences from the plan as written
+
+| Work item | Plan said | What was built, and why |
+| --- | --- | --- |
+| WI1 | Verify three sanity values | All three are correct. Minimum detectable effect returns null when no difference is detectable at the given n and discordance, which happens for 30 cases below about 25% discordance |
+| WI2 | "Cost and tokens as now" | Tokens were not recorded before. Added as an optional raw row field |
+| WI2 | Byte-identical report | True of `buildReport` already; the CLI stamped wall-clock times. Timestamps now come from `--events` or read `unknown`. `full-benchmark.yml` passes `--events` |
+| WI2 | Not in plan | `pnpm report` now validates raw rows against a schema instead of trusting them |
+| WI3 | "BLOCK if the lower bound of the paired difference falls below the margin; INCONCLUSIVE if the interval spans the margin" | These two conditions overlap. Implemented the standard reading: BLOCK when the whole interval is below the margin, INCONCLUSIVE when it contains the margin, PASS when the lower bound clears it |
+| WI3 | "BLOCK if a critical bound is exceeded" | BLOCK only if at least one critical error was observed. With none observed and a bound over the limit (small sample) the result is INCONCLUSIVE. Both exit non-zero. Otherwise a clean 4-case smoke run would be reported as harmful |
+| WI3 | Wire into the replay gate "using recorded or mock data" | No recorded data exists. Added a scripted model that runs through the real runner, tools, and fault schedule, and a `pnpm gate:mock` CI step. Output is labelled mock and a mock report can never reach status `complete` |
+| WI3 | Deterministic checks (undefined in plan) | Defined as: dataset integrity, severity rule version match, row schema, known case ids, unique runs, complete repeats, same cases in both arms. The Phase 1 idea of checking model ids against an expected set was dropped: there is no source of truth for the expected set |
+| WI3 | Not in plan | `zeroWidthInterval.policy` threshold. When the arms never disagree the bootstrap interval collapses to a point and clears any margin. Default is PASS with a warning; the stricter `inconclusive` policy is implemented and tested but makes PASS unreachable at 30 cases |
+| WI3 | Phase 1 said the gate would return INCONCLUSIVE for a 1% critical limit | The committed limit is 10%, which 30 clean cases can demonstrate (bound 9.5%). A 1% limit would be INCONCLUSIVE, as predicted |
+| WI5 | "If no abstraction exists, introduce one" | One existed. Added capabilities, model roles, normalized stop reasons, and normalized errors to it, and removed Anthropic model ids from the runner and experiment loop |
+| WI5 | "Keep the existing adapter behavior identical" | Requests are byte-identical, pinned by snapshots recorded before the refactor. One deliberate difference: provider failures and malformed responses keep their message but are now thrown as `ModelProviderError` |
+| WI5 | Capability flags on the adapter | `capabilities` is optional on the interface so the many existing test doubles stay valid. Without it the runner falls back to a registry of pinned models, then to generic defaults |
+| WI5 | Structured output in the interface | Only a capability flag (`prompt` or `json_schema`). Both adapters request the final JSON by instruction and the runner validates it. No provider-enforced schema is used |
+| WI6 | Detect modified, deleted, or reordered lines | Also detects inserted lines, and truncation when given the expected head hash. Truncation at the end cannot be detected from the log alone; the verify command prints the head hash to record elsewhere |
+| WI6 | Not in plan | The gate can append its decision to the audit log (`--audit-log`), so the log has a real producer besides the demo |
+| WI7 | "Keep the Spanish fiscal domain explanation" | The README has none. Nothing was removed and none was added |
+
+### Fixes made after automated review of the commits
+
+- `src/providers/openai-compatible.ts`: the response body was read in full before any size limit applied. It is now read as a stream and cancelled at 1 MiB.
+- `src/audit/log.ts`: verification passed on an empty or missing log, and hashed the parsed entry instead of the line. It now fails closed on an empty log and requires each line to be byte-identical to its canonical form, which rejects duplicate keys, reordered keys, extra whitespace, and alternate escapes.
+
+### Not done
+
+- No live run. No benchmark result exists; every document says so.
+- No Sonnet 5.5 or Opus 5.5 configuration. That remains the separate pending decision in `docs/decisions/2026-10-03-model-lineup-benchmark-cost-estimates.md`.
+- No baseline was created or promoted. `src/baseline.ts` is unchanged and still unused by the CLI; the gate supersedes its point-estimate logic.
+- `experimentIsComplete` still marks a run with any `bounded` or `failed` row as `pending`. This differs from the gate's rule and is recorded in the design note's ambiguity register.
+- The open action items in the 2026-09-01 post-mortem (upload `runs/` with `if: always()`, client timeouts) were left alone as out of scope.

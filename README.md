@@ -10,6 +10,25 @@ Runtime cost calculation uses the validated, versioned [pricing configuration](c
 
 The public report is pending until a complete 30-case, three-configuration, five-repeat live run succeeds and is reviewed. No benchmark value is entered by hand. Reports are generated only from committed or workflow-produced raw JSONL runs.
 
+## What this demonstrates
+
+Each row names the command or file that proves the claim. All of it runs without credentials or spend.
+
+| Capability | What exists | Proof |
+| --- | --- | --- |
+| Evaluation design | 30 versioned cases with accepted tool plans, semantic assertions, forbidden tools and claims, scheduled faults, and abstention cases; three configurations, five repeats | `pnpm validate`, [datasets/v2](datasets/v2/cases.jsonl), [design note](docs/design-note.md) |
+| Applied statistics | Wilson and Clopper-Pearson intervals, exact McNemar, seeded cluster and paired bootstrap, pass@k and pass^k, minimum detectable effect, all dependency-free and checked against scipy reference values | `pnpm vitest run tests/stats`, [src/stats](src/stats) |
+| Honest reporting | The case is the unit of analysis; the report states what the sample size can and cannot detect and is byte-identical for the same raw JSONL | `pnpm vitest run tests/report-statistics.test.ts`, [src/report-statistics.ts](src/report-statistics.ts) |
+| Go-live gate | PASS, BLOCK, or INCONCLUSIVE from versioned thresholds with a rationale per threshold; exit codes 0, 1, 2 | `pnpm gate:mock`, [config/thresholds.v1.json](config/thresholds.v1.json), [src/gate](src/gate) |
+| Regression detection | A scripted regression is blocked through the real CLI, on both critical errors and non-inferiority | `pnpm vitest run tests/gate`, `pnpm mock:run --profile regressed --output runs/mock/regressed.jsonl` then `pnpm gate --raw runs/mock/regressed.jsonl --candidate no-resource-injection --reference routed` |
+| Provider independence | Adapters declare capabilities; one contract test suite runs against the Anthropic and OpenAI-compatible adapters, and both run the whole benchmark and gate in mock mode | `pnpm vitest run tests/providers`, [src/providers](src/providers) |
+| Auditability | Append-only JSONL log, each entry chained to the previous one by sha256 over canonical JSON; verification detects modified, deleted, inserted, and reordered lines | `pnpm vitest run tests/audit`, `pnpm audit:verify --log <path>`, [src/audit/log.ts](src/audit/log.ts) |
+| Runtime safeguard | Rolling-window monitor that suspends on a Wilson upper bound and needs a named owner to re-enable, with every change logged | `pnpm demo:suspension`, [src/monitor/monitor.ts](src/monitor/monitor.ts) |
+
+What is pending: **there are no benchmark results.** No complete live run of the full configuration exists, so this repository makes no claim about how any model performs. The gate thresholds are uncalibrated starting values. `pnpm gate:mock` exercises the pipeline with a scripted stand-in for a model; its PASS is not a result. The steps to produce real results are in the [live-run runbook](docs/RUNBOOK-live-run.md).
+
+The suspension monitor and audit log are small illustrations of the pattern, not a monitoring or audit service: single writer, local file, no external anchoring of the log head.
+
 ## Requirements
 
 - Node.js 22
@@ -31,6 +50,14 @@ Run the fully mocked benchmark without credentials:
 ```sh
 pnpm benchmark:mock
 ```
+
+Run the whole pipeline (planner, runner, tools, fault schedule, scoring, gate) against a scripted model, also without credentials:
+
+```sh
+pnpm gate:mock
+```
+
+This writes `runs/mock/results.jsonl` and a gate summary under `reports/generated/mock-gate`. Both are labelled as mock data, and a report built from mock data always stays `pending`.
 
 For live runs, create `.env.local` from `.env.example`, open it in your editor, and set the key there:
 
@@ -58,8 +85,11 @@ Run the complete live benchmark only after reviewing a clean smoke result:
 
 ```sh
 node --env-file=.env.local --import tsx src/cli.ts run --config config/full.v2.json --output runs/results.jsonl
-pnpm report --raw runs/results.jsonl --config config/full.v2.json --output reports/generated
+pnpm report --raw runs/results.jsonl --events runs/events.jsonl --config config/full.v2.json --output reports/generated
+pnpm gate --raw runs/results.jsonl --candidate routed --reference direct-sonnet
 ```
+
+The `run` command appends to its output file, so use a fresh path for every run. The [live-run runbook](docs/RUNBOOK-live-run.md) has the full procedure, including the spend ceiling and the review before publishing.
 
 The CLI defaults to `datasets/v2/manifest.json` and `config/full.v2.json` when the corresponding option is omitted.
 
@@ -73,7 +103,23 @@ Raw runs and append-only telemetry are written locally. Provider request IDs, AP
 
 Published output records the commit, dataset and configuration hashes, prompt and resource versions, exact provider-returned model identifiers, repeat count, seed, Node and lockfile versions, pricing version and effective date, timestamps, token usage, and raw-result references. Dataset versions are immutable after baseline release. Corrections require a new version and manifest hash.
 
-`pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values.
+`pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values. The same raw JSONL always produces byte-identical files: run timestamps come from the telemetry events passed with `--events`, never from the wall clock.
+
+## Go-live gate
+
+`pnpm gate` compares a candidate configuration with a reference, either within one raw file or against a baseline file (`--baseline`), using [config/thresholds.v1.json](config/thresholds.v1.json).
+
+| Exit code | Decision | Condition |
+| --- | --- | --- |
+| 0 | PASS | Every deterministic check passes, the critical-error bound is within its limit, and every paired difference clears its non-inferiority margin |
+| 1 | BLOCK | A deterministic check failed, critical errors were observed beyond the limit, or a paired difference is below its margin with its whole interval |
+| 2 | INCONCLUSIVE | An interval spans its margin or the sample is too small. The message says to collect more cases |
+
+The gate writes `gate.json` and `gate.md` with the sha256 of every input, and with `--audit-log <path>` appends the decision to a hash-chained audit log. The [design note](docs/design-note.md) explains the analysis plan, the threshold rationale, and the limits of 30 cases.
+
+## Providers
+
+The benchmark is defined on the pinned Anthropic models. The runner itself holds no provider rules: adapters declare what each model accepts, and a second adapter for OpenAI-compatible chat completions endpoints is selected with `MODEL_PROVIDER=openai-compatible` (see [.env.example](.env.example)). Its models must have rates in the pricing file named by the experiment config. No result has been produced with it.
 
 ## Dataset v2 scoring contract
 
@@ -85,13 +131,13 @@ Safe policy reads are accepted only when the prompt requests the policy or when 
 
 ## CI and publication
 
-- Pull requests run a free, secretless validation and replay gate.
+- Pull requests run a free, secretless validation and replay gate. It includes `pnpm gate:mock`, which runs the full pipeline on a scripted model and fails the build unless the gate passes.
 - Trusted same-repository changes can use the protected `live-smoke` environment. Fork pull requests cannot receive provider credentials.
 - Monthly, tagged, and manually dispatched full runs use the protected `full-benchmark` environment and a hard 25-dollar ceiling.
 - A candidate baseline is promoted only through reviewed repository changes. CI never promotes it automatically.
 - Pages publishes the latest reviewed report and immutable historical reports.
 
-See the [design note](docs/design-note.md) for the go-live gate: the decision it supports, the unit of analysis, the pre-registered analysis plan, threshold rationale, open questions, and limitations.
+See the [design note](docs/design-note.md) for the go-live gate: the decision it supports, the unit of analysis, the pre-registered analysis plan, threshold rationale, open questions, and limitations. See [docs/architecture.md](docs/architecture.md) for the boundary between the domain-free core and the fiscal domain pack, and [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for dataset and baseline rules and [SECURITY.md](SECURITY.md) for responsible disclosure.
 
