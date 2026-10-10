@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import * as prompts from "@clack/prompts";
 import { z } from "zod";
+import { AuditLog } from "./audit/log.js";
 import { CliPathSchema, parseCliArguments, validateRunArtifactTargets, type CliArguments } from "./cli-options.js";
 import {
   createInteractiveArtifactPaths,
@@ -23,6 +24,7 @@ import {
   type GuidedPromptPort,
 } from "./guided-run.js";
 import { runMockExperiment } from "./mock/run.js";
+import { runSuspensionDemo } from "./monitor/demo.js";
 import { loadPricingConfig } from "./pricing.js";
 import { createProviderFromEnvironment } from "./providers/factory.js";
 import { generateReport } from "./report-command.js";
@@ -56,10 +58,22 @@ export async function main(argv: readonly string[]): Promise<void> {
       outputDirectory: parsed.outputPath ?? "reports/generated/gate",
       ...(parsed.reference === undefined ? {} : { reference: parsed.reference }),
       ...(parsed.baselinePath === undefined ? {} : { baselinePath: parsed.baselinePath }),
+      ...(parsed.auditLogPath === undefined ? {} : { auditLogPath: parsed.auditLogPath }),
     });
     process.stdout.write(`Gate ${gateReport.decision}${gateReport.dataSource === "mock" ? " (mock data)" : ""}: ${gateReport.candidate.configuration} vs ${gateReport.reference.configuration}\n`);
     for (const line of [...gateReport.reasons, ...(gateReport.recommendation ? [gateReport.recommendation] : []), ...gateReport.warnings.map((warning) => `Warning: ${warning}`)]) process.stdout.write(`${line}\n`);
     process.exitCode = gateReport.exitCode;
+    return;
+  }
+  if (parsed.command === "audit-verify") {
+    const verification = await new AuditLog(parsed.logPath).verify(parsed.expectedHeadHash);
+    process.stdout.write(`Audit log ${verification.valid ? "verified" : "FAILED verification"}: ${verification.entries} entries, head ${verification.headHash}\n`);
+    for (const issue of verification.issues) process.stdout.write(`${issue.line === 0 ? "log" : `line ${issue.line}`}: ${issue.problem}\n`);
+    process.exitCode = verification.valid ? 0 : 1;
+    return;
+  }
+  if (parsed.command === "suspension-demo") {
+    for (const line of await runSuspensionDemo(parsed.logPath ?? "runs/demo/audit.jsonl")) process.stdout.write(`${line}\n`);
     return;
   }
   if (parsed.command === "mock-run") {
@@ -84,7 +98,11 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
       const anthropic = new Anthropic({ apiKey });
       return { messages: { create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions) } };
     },
-    fetch: (url, init) => fetch(url, init),
+    fetch: async (url, init) => {
+      const response = await fetch(url, init);
+      const stream = response.body;
+      return { ok: response.ok, status: response.status, text: () => response.text(), body: stream ? { getReader: () => stream.getReader() } : null };
+    },
   });
   if (options.interactive) {
     await reserveInteractiveArtifactPaths({ resultsPath: outputPath, eventsPath });

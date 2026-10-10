@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { AuditLog } from "./audit/log.js";
 import { loadDataset, sha256 } from "./dataset.js";
 import { loadExperimentConfig } from "./experiment.js";
 import { evaluateGate } from "./gate/decision.js";
@@ -19,6 +20,9 @@ export interface GateCommandInput {
   /** Raw JSONL of an earlier accepted run. When set, the reference arm is read from this file. */
   readonly baselinePath?: string;
   readonly outputDirectory?: string;
+  /** Append-only audit log that receives one entry per gate decision. */
+  readonly auditLogPath?: string;
+  readonly now?: () => Date;
 }
 
 export const DEFAULT_GATE_CANDIDATE = "routed";
@@ -67,6 +71,28 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
       writeFile(join(input.outputDirectory, "gate.json"), `${JSON.stringify(report, null, 2)}\n`, "utf8"),
       writeFile(join(input.outputDirectory, "gate.md"), markdown, "utf8"),
     ]);
+  }
+  if (input.auditLogPath !== undefined) {
+    await new AuditLog(input.auditLogPath, input.now).append({
+      eventType: "gate_decision",
+      ruleVersion: report.thresholdsVersion,
+      dataHashes: {
+        raw: report.inputs.raw.sha256,
+        dataset: report.inputs.dataset.sha256,
+        thresholds: report.inputs.thresholds.sha256,
+        config: report.inputs.config.sha256,
+        ...(report.inputs.baseline ? { baseline: report.inputs.baseline.sha256 } : {}),
+      },
+      details: {
+        decision: report.decision,
+        exitCode: report.exitCode,
+        candidate: report.candidate.configuration,
+        reference: report.reference.configuration,
+        severityRulesVersion: report.severityRulesVersion,
+        dataSource: report.dataSource,
+        reasons: report.reasons,
+      },
+    });
   }
   return { report, markdown };
 }

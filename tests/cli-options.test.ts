@@ -77,6 +77,17 @@ describe("CLI argument parsing", () => {
     expect(() => parseCliArguments(["mock-run", "--profile", "live"])).toThrow();
   });
 
+  it("parses the audit and suspension demo commands", () => {
+    const head = "a".repeat(64);
+    expect(parseCliArguments(["audit-verify", "--log", "runs/audit.jsonl"])).toEqual({ command: "audit-verify", logPath: "runs/audit.jsonl" });
+    expect(parseCliArguments(["audit-verify", "--log", "runs/audit.jsonl", "--head", head])).toEqual({ command: "audit-verify", logPath: "runs/audit.jsonl", expectedHeadHash: head });
+    expect(() => parseCliArguments(["audit-verify"])).toThrow();
+    expect(() => parseCliArguments(["audit-verify", "--log", "x", "--head", "short"])).toThrow(/sha256/u);
+    expect(parseCliArguments(["suspension-demo"])).toEqual({ command: "suspension-demo" });
+    expect(parseCliArguments(["suspension-demo", "--log", "runs/demo.jsonl"])).toEqual({ command: "suspension-demo", logPath: "runs/demo.jsonl" });
+    expect(parseCliArguments(["gate", "--audit-log", "runs/audit.jsonl"])).toEqual({ command: "gate", auditLogPath: "runs/audit.jsonl" });
+  });
+
   it("rejects unsupported progress values, options, and commands", () => {
     expect(() => parseCliArguments(["run", "--progress", "rainbow"])).toThrow(/progress/u);
     expect(() => parseCliArguments(["run", "--output", "runs/result\nspoofed.jsonl"])).toThrow(/control characters/u);

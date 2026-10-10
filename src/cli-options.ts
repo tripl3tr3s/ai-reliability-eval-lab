@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
-export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run>";
+export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo>";
 
 const ProgressModeSchema = z.enum(["auto", "plain", "quiet"]);
 export type ProgressMode = z.infer<typeof ProgressModeSchema>;
@@ -93,7 +93,10 @@ export type CliArguments =
       readonly reference?: string;
       readonly baselinePath?: string;
       readonly outputPath?: string;
+      readonly auditLogPath?: string;
     }
+  | { readonly command: "audit-verify"; readonly logPath: string; readonly expectedHeadHash?: string }
+  | { readonly command: "suspension-demo"; readonly logPath?: string }
   | {
       readonly command: "mock-run";
       readonly configPath?: string;
@@ -195,6 +198,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
         reference: { type: "string" },
         baseline: { type: "string" },
         output: { type: "string" },
+        "audit-log": { type: "string" },
       },
     });
     const parsed = z.object({
@@ -205,6 +209,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
       reference: ConfigurationNameSchema.optional(),
       baseline: CliPathSchema.optional(),
       output: CliPathSchema.optional(),
+      "audit-log": CliPathSchema.optional(),
     }).strict().parse(values);
     return {
       command,
@@ -215,7 +220,18 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
       ...(parsed.reference === undefined ? {} : { reference: parsed.reference }),
       ...(parsed.baseline === undefined ? {} : { baselinePath: parsed.baseline }),
       ...(parsed.output === undefined ? {} : { outputPath: parsed.output }),
+      ...(parsed["audit-log"] === undefined ? {} : { auditLogPath: parsed["audit-log"] }),
     };
+  }
+  if (command === "audit-verify") {
+    const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { log: { type: "string" }, head: { type: "string" } } });
+    const parsed = z.object({ log: CliPathSchema, head: z.string().regex(/^[a-f0-9]{64}$/u, "Head must be a sha256 hex digest").optional() }).strict().parse(values);
+    return { command, logPath: parsed.log, ...(parsed.head === undefined ? {} : { expectedHeadHash: parsed.head }) };
+  }
+  if (command === "suspension-demo") {
+    const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { log: { type: "string" } } });
+    const parsed = z.object({ log: CliPathSchema.optional() }).strict().parse(values);
+    return { command, ...(parsed.log === undefined ? {} : { logPath: parsed.log }) };
   }
   if (command === "mock-run") {
     const { values } = parseArgs({

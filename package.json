@@ -11,6 +11,7 @@
     "reliability-lab": "./dist/cli.js"
   },
   "scripts": {
+    "audit:verify": "tsx src/cli.ts audit-verify",
     "benchmark": "tsx src/cli.ts run",
     "benchmark:interactive": "tsx src/cli.ts run --interactive",
     "benchmark:mock": "vitest run tests/experiment.test.ts",
@@ -18,6 +19,7 @@
     "check": "pnpm lint && pnpm type-check && pnpm test:coverage && pnpm dataset:validate && pnpm config:validate",
     "config:validate": "tsx src/cli.ts validate-config",
     "dataset:validate": "tsx src/cli.ts validate-dataset",
+    "demo:suspension": "tsx src/cli.ts suspension-demo",
     "eval": "tsx src/cli.ts run",
     "gate": "tsx src/cli.ts gate",
     "gate:mock": "pnpm mock:run --output runs/mock/results.jsonl && pnpm gate --raw runs/mock/results.jsonl --output reports/generated/mock-gate",
