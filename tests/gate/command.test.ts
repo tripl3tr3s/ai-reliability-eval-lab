@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -66,7 +67,10 @@ describe("gate command", () => {
     const { report, markdown } = await runGate({ rawPath: clean, configPath: CONFIG, thresholdsPath: THRESHOLDS, candidate: "routed", outputDirectory: output });
     expect(report).toMatchObject({ decision: "PASS", exitCode: 0, dataSource: "mock", reference: { configuration: "direct-sonnet" } });
     expect(report.inputs.dataset.sha256).toBe(dataset.hash);
-    expect(report.inputs.raw.sha256).toMatch(/^[a-f0-9]{64}$/u);
+    // The recorded hashes are of the file bytes, so they match `sha256sum` on the same files.
+    expect(report.inputs.raw.sha256).toBe(createHash("sha256").update(await readFile(clean)).digest("hex"));
+    expect(report.inputs.thresholds.sha256).toBe(createHash("sha256").update(await readFile(THRESHOLDS)).digest("hex"));
+    expect(report.inputs.config.sha256).toBe(createHash("sha256").update(await readFile(CONFIG)).digest("hex"));
     expect(report.inputs.baseline).toBeNull();
     expect(JSON.parse(await readFile(join(output, "gate.json"), "utf8"))).toEqual(JSON.parse(JSON.stringify(report)));
     expect(await readFile(join(output, "gate.md"), "utf8")).toBe(markdown);

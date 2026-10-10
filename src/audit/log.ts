@@ -114,6 +114,22 @@ export function verifyAuditLog(text: string, options: VerifyOptions = {}): Audit
   return { valid: issues.length === 0, entries, headHash: previousHash, issues };
 }
 
+/** Replaces undecodable input so that verification reports it instead of throwing. Never valid JSON. */
+const UNDECODABLE = "\u0000invalid-utf8";
+
+/**
+ * Decodes log bytes strictly. A lenient decoder maps every malformed byte sequence to U+FFFD, so
+ * different files on disk would verify as the same text; a byte order mark would likewise be hidden.
+ * Malformed input is turned into a line that can never verify.
+ */
+export function decodeAuditBytes(bytes: Uint8Array): string {
+  try {
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return UNDECODABLE;
+  }
+}
+
 /**
  * Append-only audit log on disk. Entries are only ever appended; nothing here rewrites the file.
  * Assumes a single writer. This is a demonstration of the pattern, not a durable audit service.
@@ -139,11 +155,13 @@ export class AuditLog {
   }
 
   private async read(): Promise<string> {
+    let bytes: Buffer;
     try {
-      return await readFile(this.path, "utf8");
+      bytes = await readFile(this.path);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
       throw error;
     }
+    return decodeAuditBytes(bytes);
   }
 }

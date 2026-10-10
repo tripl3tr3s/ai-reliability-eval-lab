@@ -5,7 +5,7 @@ import { loadDataset, sha256 } from "./dataset.js";
 import { loadExperimentConfig } from "./experiment.js";
 import { evaluateGate } from "./gate/decision.js";
 import { renderGateMarkdown, type GateReport } from "./gate/render.js";
-import { loadThresholds } from "./gate/thresholds.js";
+import { parseThresholds } from "./gate/thresholds.js";
 import { containsMockRuns, parseRawRuns } from "./raw-run.js";
 import { createSyntheticTools } from "./tools.js";
 
@@ -25,19 +25,26 @@ export interface GateCommandInput {
   readonly now?: () => Date;
 }
 
+/** Reads a file once and hashes its bytes, so the recorded sha256 matches `sha256sum` even for input that is not valid UTF-8. */
+async function readHashed(path: string): Promise<{ text: string; sha256: string }> {
+  const bytes = await readFile(path);
+  return { text: bytes.toString("utf8"), sha256: sha256(bytes) };
+}
+
 export const DEFAULT_GATE_CANDIDATE = "routed";
 export const DEFAULT_GATE_REFERENCE = "direct-sonnet";
 
 /** Reads raw JSONL, applies the versioned thresholds, and optionally writes gate.json and gate.md. */
 export async function runGate(input: GateCommandInput): Promise<{ report: GateReport; markdown: string }> {
-  const { thresholds, text: thresholdsText } = await loadThresholds(input.thresholdsPath);
-  const configText = await readFile(input.configPath, "utf8");
+  const thresholdsFile = await readHashed(input.thresholdsPath);
+  const thresholds = parseThresholds(thresholdsFile.text);
+  const configFile = await readHashed(input.configPath);
   const config = await loadExperimentConfig(input.configPath);
   const dataset = await loadDataset(`${config.dataset}/manifest.json`);
-  const rawText = await readFile(input.rawPath, "utf8");
-  const raw = parseRawRuns(rawText);
-  const baselineText = input.baselinePath === undefined ? null : await readFile(input.baselinePath, "utf8");
-  const baseline = baselineText === null ? null : parseRawRuns(baselineText);
+  const rawFile = await readHashed(input.rawPath);
+  const raw = parseRawRuns(rawFile.text);
+  const baselineFile = input.baselinePath === undefined ? null : await readHashed(input.baselinePath);
+  const baseline = baselineFile === null ? null : parseRawRuns(baselineFile.text);
   const referenceConfiguration = input.reference ?? (baseline ? input.candidate : DEFAULT_GATE_REFERENCE);
   if (!baseline && referenceConfiguration === input.candidate) throw new Error("Candidate and reference must differ unless a baseline file is given");
 
@@ -57,11 +64,11 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
     ...result,
     dataSource: containsMockRuns(modelIds) ? "mock" : "provider",
     inputs: {
-      raw: { path: input.rawPath, sha256: sha256(rawText) },
-      baseline: baselineText === null ? null : { path: input.baselinePath!, sha256: sha256(baselineText) },
+      raw: { path: input.rawPath, sha256: rawFile.sha256 },
+      baseline: baselineFile === null ? null : { path: input.baselinePath!, sha256: baselineFile.sha256 },
       dataset: { version: dataset.version, sha256: dataset.hash },
-      thresholds: { path: input.thresholdsPath, sha256: sha256(thresholdsText) },
-      config: { path: input.configPath, sha256: sha256(configText) },
+      thresholds: { path: input.thresholdsPath, sha256: thresholdsFile.sha256 },
+      config: { path: input.configPath, sha256: configFile.sha256 },
     },
   };
   const markdown = renderGateMarkdown(report);

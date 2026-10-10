@@ -1,4 +1,3 @@
-import { readFile } from "node:fs/promises";
 import { z } from "zod";
 import { STATISTICS_METRICS } from "../report-statistics.js";
 
@@ -37,9 +36,4 @@ export type Thresholds = z.infer<typeof ThresholdsSchema>;
 
 export function parseThresholds(text: string): Thresholds {
   return ThresholdsSchema.parse(JSON.parse(text));
-}
-
-export async function loadThresholds(path: string): Promise<{ thresholds: Thresholds; text: string }> {
-  const text = await readFile(path, "utf8");
-  return { thresholds: parseThresholds(text), text };
 }

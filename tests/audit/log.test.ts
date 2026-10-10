@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
-import { AuditLog, canonicalJson, chainEntry, GENESIS_HASH, sha256Canonical, verifyAuditLog, type AuditEvent } from "../../src/audit/log.js";
+import { AuditLog, canonicalJson, chainEntry, decodeAuditBytes, GENESIS_HASH, sha256Canonical, verifyAuditLog, type AuditEvent } from "../../src/audit/log.js";
 import { runGate } from "../../src/gate-command.js";
 import { runMockExperiment } from "../../src/mock/run.js";
 
@@ -120,6 +120,22 @@ describe("hash-chained audit log", () => {
     expect(withLine(JSON.stringify(Object.fromEntries(Object.entries(JSON.parse(lines[1]!) as Record<string, unknown>).reverse())))).toMatchObject(canonical);
     expect(verifyAuditLog(`${lines[0]}\r\n${lines[1]}\r\n`).valid).toBe(false);
     expect(verifyAuditLog(`${lines[0]}\n\n${lines[1]}\n${lines[2]}\n`).issues).toEqual([{ line: 2, problem: "not a valid audit entry" }]);
+  });
+
+  it("rejects bytes that are not strict UTF-8 instead of decoding them leniently", async () => {
+    const { path, lines } = await logWith(2);
+    const good = Buffer.from(join_(lines), "utf8");
+    // A lenient decoder turns the invalid byte 0xff into U+FFFD, so two different files would read as the same text.
+    const position = good.indexOf("test_event");
+    const malformed = Buffer.concat([good.subarray(0, position), Buffer.from([0xff]), good.subarray(position + 1)]);
+    await writeFile(path, malformed);
+    expect(await new AuditLog(path).verify()).toMatchObject({ valid: false, issues: [{ line: 1, problem: "not a valid audit entry" }] });
+    await expect(new AuditLog(path).append(event(2))).rejects.toThrow(/fails verification/u);
+    await writeFile(path, Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), good]));
+    expect((await new AuditLog(path).verify()).valid).toBe(false);
+    await writeFile(path, good);
+    expect((await new AuditLog(path).verify()).valid).toBe(true);
+    expect(decodeAuditBytes(Buffer.from("añ€", "utf8"))).toBe("añ€");
   });
 
   it("refuses to extend a log that fails verification", async () => {
