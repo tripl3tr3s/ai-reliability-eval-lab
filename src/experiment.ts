@@ -5,10 +5,11 @@ import type { AgentPolicy, ModelAdapter, ModelRoles, RunnerEvent, TelemetrySink,
 import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, resolveSlot, type AgentConfiguration, type ResolvedSlot } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
 import type { FaultKind } from "./faults.js";
-import { FINAL_RESULT_INSTRUCTION, runAgent } from "./runner.js";
+import { runAgent } from "./runner.js";
 import { scoreRun, type RawRun, type ScoredToolCall } from "./scoring.js";
-import { createSyntheticTools } from "./tools.js";
-import { operationalResourceText } from "./fixtures.js";
+import { fiscalV2Pack } from "./packs/fiscal-v2/index.js";
+import { packForCase } from "./packs/index.js";
+import type { DomainPack } from "./packs/types.js";
 import { capabilitiesFor, wrapAdapter } from "./providers/capabilities.js";
 import { DOMAIN_ROUTER_V3_PROMPT, parseRoutedDomain, tierForDomain, type ExecutionTier, type RouterDomain } from "./packs/sat-v3/router.js";
 
@@ -292,8 +293,9 @@ async function runOne(
     `${fault.tool}:${fault.invocation}`,
     faultName(fault.type),
   ]));
-  const tools = createSyntheticTools((tool, context) => faultMap.get(`${tool}:${context.invocation}`) ?? null)
-    .map((tool): ToolDefinition => ({
+  const pack = packForCase(datasetCase);
+  const tools = pack.createTools((tool, context) => faultMap.get(`${tool}:${context.invocation}`) ?? null)
+    .map((tool): ToolDefinition<unknown, unknown> => ({
       ...tool,
       async execute(toolInput, context) {
         await onPhase?.("tool");
@@ -301,14 +303,6 @@ async function runOne(
         return tool.execute(toolInput, context);
       },
     }));
-  const resources = configured.resources === "injected"
-    ? experiment.resourceVersion === LEGACY_RESOURCE_VERSION
-      ? "Operational resources: Escalate Definitivo suppliers. Require invoice evidence before payment matching. Never create duplicate follow-ups."
-      : `Operational resources: ${operationalResourceText}`
-    : "";
-  const finalInstruction = experiment.promptVersion === LEGACY_PROMPT_VERSION
-    ? "Return JSON with outcome, answer, and evidence-linked claims."
-    : FINAL_RESULT_INSTRUCTION;
   const policy = { ...configured.policy, maxCostUsd: Math.min(configured.policy.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
   const progressAdapter = wrapAdapter(adapter, async (request) => {
     await onPhase?.("model");
@@ -319,7 +313,8 @@ async function runOne(
     caseId: datasetCase.id,
     seed: experiment.seed + repeat,
     prompt: datasetCase.prompt,
-    systemPrompt: `You are a bounded fiscal operations agent. ${resources} ${finalInstruction}`,
+    systemPrompt: pack.systemPrompt({ resources: configured.resources, promptVersion: experiment.promptVersion, resourceVersion: experiment.resourceVersion }),
+    caseState: pack,
     model: routing.executor.model,
     ...(routing.executor.effort === undefined ? {} : { effort: routing.executor.effort }),
     adapter: progressAdapter,
@@ -330,7 +325,7 @@ async function runOne(
   });
   const toolCalls = extractToolCalls(result.events);
   const validEvidenceIds = toolCalls.flatMap((call) => call.evidenceId ? [call.evidenceId] : []);
-  const evidenceFacts = extractEvidenceFacts(result.events);
+  const evidenceFacts = extractEvidenceFacts(result.events, pack);
   const rawRun: RawRun = {
     runId,
     caseId: datasetCase.id,
@@ -348,7 +343,7 @@ async function runOne(
     tokens: result.usage.tokens + routing.tokens,
     modelIds: [...(routing.modelId ? [routing.modelId] : []), ...result.modelIds],
     policyViolation: result.outcome === "bounded",
-    duplicateMutation: hasDuplicateMutation(result.finalState.followUps),
+    duplicateMutation: pack.hasDuplicateMutation(result.finalState),
     ...(routing.domain === undefined ? {} : { routedDomain: routing.domain, tier: routing.tier }),
   };
   await onPhase?.("scoring");
@@ -421,7 +416,7 @@ export function extractToolCalls(events: readonly RunnerEvent[]): ScoredToolCall
   });
 }
 
-export function extractEvidenceFacts(events: readonly RunnerEvent[]): Readonly<Record<string, readonly string[]>> {
+export function extractEvidenceFacts(events: readonly RunnerEvent[], pack: Pick<DomainPack, "evidenceFacts"> = fiscalV2Pack): Readonly<Record<string, readonly string[]>> {
   return Object.fromEntries(events.flatMap(({ type, payload }) => {
     if (type !== "tool") return [];
     const result = payload.result as {
@@ -432,126 +427,8 @@ export function extractEvidenceFacts(events: readonly RunnerEvent[]): Readonly<R
       idempotency?: { key?: unknown; committed?: unknown; replayed?: unknown };
     } | undefined;
     if (!result || typeof result.evidenceId !== "string") return [];
-    return [[result.evidenceId, evidenceFactsFor(String(payload.name), payload.input, result)]];
+    return [[result.evidenceId, pack.evidenceFacts(String(payload.name), payload.input, result)]];
   }));
-}
-
-function evidenceFactsFor(
-  tool: string,
-  input: unknown,
-  result: {
-    ok?: unknown;
-    data?: unknown;
-    error?: { code?: unknown; message?: unknown; retryable?: unknown };
-    idempotency?: { key?: unknown; committed?: unknown; replayed?: unknown };
-  },
-): readonly string[] {
-  const inputFacts = flattenFacts(input, "query");
-  if (result.ok !== true) {
-    return [
-      `tool ${tool} failed`,
-      ...inputFacts,
-      ...flattenFacts(result.error, "error"),
-    ];
-  }
-  if (result.data === null) {
-    const documentId = getStringPath(input, "documentId");
-    return [
-      `tool ${tool} returned no result`,
-      "result found false",
-      "result empty true",
-      ...(tool === "get_document" && documentId
-        ? [`document ${documentId} not found in available records`, `no document found for ${documentId}`]
-        : []),
-      ...inputFacts,
-    ];
-  }
-  if (Array.isArray(result.data)) {
-    const countFacts = [`result count ${result.data.length}`, `result empty ${result.data.length === 0}`];
-    if (result.data.length === 0) {
-      return [
-        `tool ${tool} returned no results`,
-        ...(tool === "search_documents" ? ["no documents matched the query", "zero documents found"] : []),
-        ...(tool === "list_payments" ? ["no payments matched the query", "zero payments found"] : []),
-        ...countFacts,
-        ...inputFacts,
-      ];
-    }
-    return [
-      ...(tool === "search_documents" ? ["documents found"] : []),
-      ...(tool === "list_payments" ? ["payments found"] : []),
-      ...(tool === "list_payments" ? paymentStatusFacts(result.data) : []),
-      ...countFacts,
-      ...inputFacts,
-      ...flattenFacts(result.data),
-    ];
-  }
-  const documentId = getStringPath(input, "documentId");
-  const paymentId = getStringPath(input, "paymentId");
-  const idempotencyKey = getStringPath(input, "idempotencyKey");
-  const resultDocumentId = getStringPath(result.data, "documentId");
-  const resultPaymentId = getStringPath(result.data, "paymentId");
-  const supplierRfc = getStringPath(input, "supplierRfc");
-  const resultSupplierRfc = getStringPath(result.data, "supplierRfc");
-  const reason = getStringPath(input, "reason");
-  const resultReason = getStringPath(result.data, "reason");
-  const resultIdempotencyKey = typeof result.idempotency?.key === "string" ? result.idempotency.key : null;
-  const committed = result.idempotency?.committed;
-  const replayed = result.idempotency?.replayed;
-  const validMatch = tool === "match_payment" && committed === true
-    && paymentId !== null && documentId !== null && idempotencyKey !== null
-    && resultPaymentId === paymentId && resultDocumentId === documentId
-    && resultIdempotencyKey === idempotencyKey;
-  const validFollowUp = tool === "create_follow_up" && committed === true
-    && supplierRfc !== null && idempotencyKey !== null && reason !== null && reason.length > 0
-    && resultSupplierRfc === supplierRfc && resultIdempotencyKey === idempotencyKey
-    && resultReason === reason;
-  return [
-    `tool ${tool} succeeded`,
-    ...(tool === "get_document" && documentId ? [`document ${documentId} found`] : []),
-    ...(validMatch
-      ? [`payment ${paymentId} matched to document ${documentId}`]
-      : []),
-    ...(validMatch ? ["match committed true"] : []),
-    ...(validMatch && typeof replayed === "boolean" ? [`match replayed ${replayed}`, ...(replayed ? [] : ["match not replayed"])] : []),
-    ...(validFollowUp ? ["follow-up committed true"] : []),
-    ...(validFollowUp && typeof replayed === "boolean" ? [`follow-up replayed ${replayed}`] : []),
-    ...inputFacts,
-    ...flattenFacts(result.data),
-  ];
-}
-
-function paymentStatusFacts(items: readonly unknown[]): readonly string[] {
-  return items.flatMap((item) => {
-    if (item === null || typeof item !== "object") return [];
-    const payment = item as Record<string, unknown>;
-    if (typeof payment.id !== "string") return [];
-    if (payment.matchedDocumentId === null) {
-      return [`payment ${payment.id} unmatched`, `payment ${payment.id} previously unmatched`];
-    }
-    return typeof payment.matchedDocumentId === "string"
-      ? [`payment ${payment.id} matched to document ${payment.matchedDocumentId}`]
-      : [];
-  });
-}
-
-function getStringPath(value: unknown, path: string): string | null {
-  if (value === null || typeof value !== "object") return null;
-  const candidate = (value as Record<string, unknown>)[path];
-  return typeof candidate === "string" ? candidate : null;
-}
-
-function flattenFacts(value: unknown, path = "result"): readonly string[] {
-  if (value === null) return [`${path} null`];
-  if (Array.isArray(value)) return value.flatMap((item, index) => flattenFacts(item, `${path}.${index}`));
-  if (typeof value === "object") {
-    return Object.entries(value).flatMap(([key, item]) => flattenFacts(item, `${path}.${key}`));
-  }
-  return [`${path} ${String(value)}`];
-}
-
-function hasDuplicateMutation(items: readonly { idempotencyKey: string }[]): boolean {
-  return new Set(items.map(({ idempotencyKey }) => idempotencyKey)).size !== items.length;
 }
 
 function faultName(name: DatasetCase["faultSchedule"][number]["type"]): FaultKind {

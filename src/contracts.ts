@@ -140,20 +140,21 @@ export const ToolEnvelopeSchema = z.union([
 ]);
 export type ToolEnvelope = z.infer<typeof ToolEnvelopeSchema>;
 
-export interface ToolContext {
+/** `TState` is owned by the domain pack that created the tools. The fiscal-v2 pack uses `CaseState`. */
+export interface ToolContext<TState = CaseState> {
   readonly caseId: string;
   readonly seed: number;
   readonly invocation: number;
-  readonly state: CaseState;
+  readonly state: TState;
   readonly signal: AbortSignal;
 }
 
-export interface ToolDefinition<TInput = unknown> {
+export interface ToolDefinition<TInput = unknown, TState = CaseState> {
   readonly name: string;
   readonly description: string;
   readonly inputSchema: z.ZodType<TInput>;
   readonly sideEffect: SideEffectClass;
-  execute(input: TInput, context: ToolContext): Promise<ToolEnvelope>;
+  execute(input: TInput, context: ToolContext<TState>): Promise<ToolEnvelope>;
 }
 
 export interface CaseState {
@@ -200,7 +201,8 @@ export interface EvidenceClaim { readonly claim: string; readonly evidenceIds: r
 export interface AgentResult {
   readonly outcome: 'completed' | 'abstained' | 'bounded' | 'error';
   readonly answer: string;
-  readonly finalState: { readonly followUps: readonly FollowUp[]; readonly matchedPayments: Readonly<Record<string, string>> };
+  /** Projection of the pack's case state after the run. Its shape is defined by the domain pack. */
+  readonly finalState: Readonly<Record<string, unknown>>;
   readonly claims: readonly EvidenceClaim[];
   readonly usage: { readonly tokens: number; readonly costUsd: number };
   readonly modelIds: readonly string[];

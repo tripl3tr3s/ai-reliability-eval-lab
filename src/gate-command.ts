@@ -7,7 +7,7 @@ import { evaluateGate } from "./gate/decision.js";
 import { renderGateMarkdown, type GateReport } from "./gate/render.js";
 import { parseThresholds } from "./gate/thresholds.js";
 import { containsMockRuns, parseRawRuns } from "./raw-run.js";
-import { createSyntheticTools } from "./tools.js";
+import { packForDatasetVersion, writeToolNames } from "./packs/index.js";
 
 export interface GateCommandInput {
   readonly rawPath: string;
@@ -52,7 +52,7 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
     thresholds,
     cases: dataset.cases,
     expectedRepeats: config.repeats,
-    writeTools: new Set(createSyntheticTools().filter(({ sideEffect }) => sideEffect === "simulated-write").map(({ name }) => name)),
+    writeTools: writeToolNames(packForDatasetVersion(dataset.version)),
     candidate: { source: input.rawPath, configuration: input.candidate, runs: raw.runs, invalidRows: raw.issues.length },
     reference: baseline
       ? { source: input.baselinePath!, configuration: referenceConfiguration, runs: baseline.runs, invalidRows: baseline.issues.length }

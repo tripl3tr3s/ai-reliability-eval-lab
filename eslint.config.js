@@ -5,7 +5,7 @@ import tseslint from 'typescript-eslint'
 // (fixtures, synthetic tools, efos-risk-graph) or into the experiment loop that wires it in.
 // See docs/architecture.md.
 const domainPack = {
-  group: ['**/fixtures.js', '**/tools.js', '**/experiment.js', '**/mock/**', 'efos-risk-graph', 'efos-risk-graph/*'],
+  group: ['**/fixtures.js', '**/tools.js', '**/experiment.js', '**/mock/**', '**/packs/**', 'efos-risk-graph', 'efos-risk-graph/*'],
   message: 'Core code must stay independent of the fiscal domain pack. See docs/architecture.md.',
 }
 
