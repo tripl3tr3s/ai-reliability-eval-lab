@@ -1,17 +1,28 @@
 import { z } from "zod";
-import { ModelProviderError, providerErrorCodeForStatus, type ModelAdapter, type ModelCapabilities, type ModelRequest, type ModelResponse, type ModelRoles } from "./contracts.js";
+import { ModelProviderError, NORMALIZED_STOP_REASONS, providerErrorCodeForStatus, type ModelAdapter, type ModelCapabilities, type ModelRequest, type ModelResponse, type ModelRoles } from "./contracts.js";
 import { decodeAssistantTurn } from "./providers/assistant-turn.js";
-import type { ModelRate } from "./pricing.js";
+import { costForUsage, type ModelRate } from "./pricing.js";
 
 export const ANTHROPIC_MODELS = {
   haiku: "claude-haiku-4-5-20251001",
   sonnet: "claude-sonnet-5",
+  haiku55: "claude-haiku-5-5",
+  sonnet55: "claude-sonnet-5-5",
+  opus55: "claude-opus-5-5",
 } as const;
 
-/** Provider rules for the pinned models. Sonnet 5 rejects temperature (adaptive thinking) and gets a larger per-call output allowance. */
+/**
+ * Provider rules for the pinned models. Sonnet 5 rejects temperature and gets a larger per-call output
+ * allowance. The 5.5 models also reject temperature, think adaptively by default (thinking counts toward
+ * max_tokens, so their per-call allowance is larger), accept an effort, and need their assistant blocks
+ * replayed unchanged. The legacy pins keep no thinking declaration so their requests stay as recorded.
+ */
 export const ANTHROPIC_MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = Object.freeze({
   [ANTHROPIC_MODELS.haiku]: { provider: "anthropic", acceptsTemperature: true, defaultTemperature: 0, maxOutputTokensPerCall: 4_096, toolCalling: true, structuredOutput: "prompt" },
   [ANTHROPIC_MODELS.sonnet]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 8_192, toolCalling: true, structuredOutput: "prompt" },
+  [ANTHROPIC_MODELS.haiku55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 4_096, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
+  [ANTHROPIC_MODELS.sonnet55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 16_384, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
+  [ANTHROPIC_MODELS.opus55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 16_384, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
 });
 
 export const ANTHROPIC_MODEL_ROLES: ModelRoles = Object.freeze({
@@ -67,6 +78,7 @@ const ContentBlockSchema = z.union([
 const anthropicResponseSchema = z.object({
   model: z.string().min(1),
   stop_reason: z.string().nullable(),
+  stop_details: z.object({ category: z.string().nullable().optional() }).passthrough().nullable().optional(),
   usage: z.object({
     input_tokens: z.number().int().nonnegative(),
     output_tokens: z.number().int().nonnegative(),
@@ -103,8 +115,12 @@ export class AnthropicAdapter implements ModelAdapter {
     if (!Object.values(ANTHROPIC_MODELS).includes(request.model as never)) {
       throw new Error(`Unpinned Anthropic model: ${request.model}`);
     }
-    if (request.model === ANTHROPIC_MODELS.sonnet && request.temperature !== undefined) {
-      throw new Error("Sonnet 5 does not accept temperature");
+    const capabilities = this.capabilities(request.model);
+    if (!capabilities.acceptsTemperature && request.temperature !== undefined) {
+      throw new Error(`${request.model === ANTHROPIC_MODELS.sonnet ? "Sonnet 5" : request.model} does not accept temperature`);
+    }
+    if (capabilities.thinking !== "adaptive" && request.effort !== undefined) {
+      throw new Error(`${request.model} does not accept effort`);
     }
     const rate = this.rates[request.model];
     if (!rate) throw new Error(`Missing pricing rate for model: ${request.model}`);
@@ -114,6 +130,8 @@ export class AnthropicAdapter implements ModelAdapter {
         model: request.model,
         max_tokens: request.maxOutputTokens,
         ...(request.temperature === undefined ? {} : { temperature: request.temperature }),
+        ...(capabilities.thinking === "adaptive" ? { thinking: { type: "adaptive" } } : {}),
+        ...(request.effort === undefined ? {} : { output_config: { effort: request.effort } }),
         ...(request.messages.some(({ role }) => role === "system")
           ? { system: request.messages.filter(({ role }) => role === "system").map(({ content }) => content).join("\n") }
           : {}),
@@ -156,10 +174,12 @@ export class AnthropicAdapter implements ModelAdapter {
       usage: {
         inputTokens: response.usage.input_tokens,
         outputTokens: response.usage.output_tokens,
-        costUsd: price(rate, response.usage.input_tokens, response.usage.output_tokens),
+        costUsd: costForUsage(rate, response.usage.input_tokens, response.usage.output_tokens),
       },
       modelId: response.model,
       latencyMs: performance.now() - started,
+      ...(capabilities.thinking === "adaptive" ? { providerContent: response.content } : {}),
+      ...(response.stop_reason === NORMALIZED_STOP_REASONS.refusal ? { refusalCategory: response.stop_details?.category ?? null } : {}),
     };
   }
 }
@@ -185,6 +205,8 @@ function toAnthropicMessage(message: ModelRequest["messages"][number]): Record<s
   if (message.role === "assistant") {
     const turn = decodeAssistantTurn(message.content);
     if (turn === null) return { role: "assistant", content: message.content };
+    // Adaptive-thinking models require their own blocks, thinking included, replayed unchanged.
+    if (turn.providerContent !== undefined) return { role: "assistant", content: turn.providerContent };
     return {
       role: "assistant",
       content: [
@@ -194,8 +216,4 @@ function toAnthropicMessage(message: ModelRequest["messages"][number]): Record<s
     };
   }
   return { role: "user", content: message.content };
-}
-
-function price(rate: ModelRate, inputTokens: number, outputTokens: number): number {
-  return (inputTokens * rate.input + outputTokens * rate.output) / 1_000_000;
 }

@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { ModelProviderError, NORMALIZED_STOP_REASONS, providerErrorCodeForStatus, type ModelAdapter, type ModelCapabilities, type ModelRequest, type ModelResponse } from "../contracts.js";
-import type { ModelRate } from "../pricing.js";
+import { costForUsage, type ModelRate } from "../pricing.js";
 import { decodeAssistantTurn } from "./assistant-turn.js";
 
 const PROVIDER = "openai-compatible";
@@ -183,7 +183,7 @@ export class OpenAiCompatibleAdapter implements ModelAdapter {
       usage: {
         inputTokens: parsed.usage.prompt_tokens,
         outputTokens: parsed.usage.completion_tokens,
-        costUsd: (parsed.usage.prompt_tokens * rate.input + parsed.usage.completion_tokens * rate.output) / 1_000_000,
+        costUsd: costForUsage(rate, parsed.usage.prompt_tokens, parsed.usage.completion_tokens),
       },
       modelId: parsed.model,
       latencyMs: performance.now() - started,

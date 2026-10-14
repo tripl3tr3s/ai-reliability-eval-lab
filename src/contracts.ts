@@ -23,6 +23,10 @@ export const ModelToolCallSchema = z.object({
 });
 export type ModelToolCall = z.infer<typeof ModelToolCallSchema>;
 
+/** Reasoning depth for models that declare adaptive thinking. */
+export const EFFORT_LEVELS = ["low", "medium", "high", "xhigh", "max"] as const;
+export type Effort = (typeof EFFORT_LEVELS)[number];
+
 export interface ModelResponse {
   readonly text: string;
   readonly toolCalls: readonly ModelToolCall[];
@@ -30,6 +34,13 @@ export interface ModelResponse {
   readonly usage: { readonly inputTokens: number; readonly outputTokens: number; readonly costUsd: number };
   readonly modelId: string;
   readonly latencyMs: number;
+  /**
+   * Provider-native assistant blocks, returned only when the provider requires them to be replayed
+   * unchanged on the next request (thinking blocks on adaptive-thinking models). Opaque to the runner.
+   */
+  readonly providerContent?: readonly unknown[];
+  /** Provider refusal category when stopReason is the normalized refusal value. */
+  readonly refusalCategory?: string | null;
 }
 
 export interface ModelRequest {
@@ -37,15 +48,17 @@ export interface ModelRequest {
   readonly tools: readonly ModelTool[];
   readonly model: string;
   readonly temperature?: number;
+  /** Only valid for models whose capabilities declare adaptive thinking. */
+  readonly effort?: Effort;
   readonly maxOutputTokens: number;
   readonly signal: AbortSignal;
 }
 
 /**
  * Stop reasons every adapter must map its provider vocabulary onto. Other provider-specific
- * values may pass through unchanged, but these three carry meaning for the runner.
+ * values may pass through unchanged, but these carry meaning for the runner.
  */
-export const NORMALIZED_STOP_REASONS = { endTurn: "end_turn", toolUse: "tool_use", outputLimit: "max_tokens" } as const;
+export const NORMALIZED_STOP_REASONS = { endTurn: "end_turn", toolUse: "tool_use", outputLimit: "max_tokens", refusal: "refusal" } as const;
 
 /** What a model accepts, declared by its adapter so the runner holds no provider rules. */
 export interface ModelCapabilities {
@@ -59,6 +72,8 @@ export interface ModelCapabilities {
   readonly toolCalling: boolean;
   /** "prompt": final JSON is requested by instruction and validated by the runner. "json_schema": the provider can enforce a schema. */
   readonly structuredOutput: "prompt" | "json_schema";
+  /** "adaptive": the model thinks by default, accepts an effort, and needs its assistant blocks replayed unchanged. */
+  readonly thinking?: "adaptive";
 }
 
 export const PROVIDER_ERROR_CODES = ["rate_limit", "timeout", "auth", "invalid_request", "server", "aborted", "invalid_response", "unknown"] as const;

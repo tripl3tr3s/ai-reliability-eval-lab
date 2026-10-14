@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { AgentPolicy, AgentResult, ModelAdapter, NormalizedMessage, RunnerEvent, TelemetrySink, ToolDefinition, ToolEnvelope } from './contracts.js';
+import type { AgentPolicy, AgentResult, Effort, ModelAdapter, NormalizedMessage, RunnerEvent, TelemetrySink, ToolDefinition, ToolEnvelope } from './contracts.js';
 import { ToolEnvelopeSchema } from './contracts.js';
 import { createCaseState } from './tools.js';
 import { NORMALIZED_STOP_REASONS } from './contracts.js';
@@ -18,6 +18,8 @@ export interface RunAgentInput {
   readonly prompt: string;
   readonly systemPrompt: string;
   readonly model: string;
+  /** Sent only to models whose capabilities declare adaptive thinking. */
+  readonly effort?: Effort;
   readonly adapter: ModelAdapter;
   readonly tools: readonly ToolDefinition[];
   readonly policy: AgentPolicy;
@@ -62,7 +64,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       const perCallOutputLimit = capabilities.maxOutputTokensPerCall;
       let response: Awaited<ReturnType<ModelAdapter['generate']>>;
       try {
-        response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(capabilities.acceptsTemperature && capabilities.defaultTemperature !== undefined ? { temperature: capabilities.defaultTemperature } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
+        response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(capabilities.acceptsTemperature && capabilities.defaultTemperature !== undefined ? { temperature: capabilities.defaultTemperature } : {}), ...(input.effort !== undefined && capabilities.thinking === 'adaptive' ? { effort: input.effort } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
       } catch (error) {
         if (input.signal?.aborted) throw abortFailure(input.signal);
         // The provider SDK rejects with its own abort error, so the deadline is detected from our signal, not the error.
@@ -74,6 +76,10 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       costUsd += response.usage.costUsd;
       modelIds.push(response.modelId);
       await emit('model', { iteration, modelId: response.modelId, stopReason: response.stopReason, tokens, costUsd });
+      if (response.stopReason === NORMALIZED_STOP_REASONS.refusal) {
+        await emit('error', { phase: 'refusal', iteration, category: response.refusalCategory ?? null });
+        return { ...boundedError('Model refusal', state, events, tokens, costUsd, modelIds, started), outcome: 'error' };
+      }
       if (response.stopReason === NORMALIZED_STOP_REASONS.outputLimit) return boundedError('Model output token limit reached', state, events, tokens, costUsd, modelIds, started);
       if (tokens > input.policy.maxTokens) return boundedError('Token ceiling exceeded', state, events, tokens, costUsd, modelIds, started);
       if (costUsd > input.policy.maxCostUsd) return boundedError('Cost ceiling exceeded', state, events, tokens, costUsd, modelIds, started);

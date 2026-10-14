@@ -18,7 +18,17 @@
         "additionalProperties": false,
         "properties": {
           "input": { "type": "number", "minimum": 0 },
-          "output": { "type": "number", "minimum": 0 }
+          "output": { "type": "number", "minimum": 0 },
+          "longPrompt": {
+            "type": "object",
+            "required": ["thresholdTokens", "input", "output"],
+            "additionalProperties": false,
+            "properties": {
+              "thresholdTokens": { "type": "integer", "exclusiveMinimum": 0 },
+              "input": { "type": "number", "minimum": 0 },
+              "output": { "type": "number", "minimum": 0 }
+            }
+          }
         }
       }
     }
