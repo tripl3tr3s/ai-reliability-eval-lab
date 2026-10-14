@@ -2,7 +2,7 @@ import { access } from "node:fs/promises";
 import { validateRunArtifactPaths } from "./cli-options.js";
 import type { ExperimentFile, ExperimentPlan } from "./experiment.js";
 
-export type GuidedConfigurationChoice = "smoke-v2" | "full-v2" | "custom";
+export type GuidedConfigurationChoice = "smoke-v2" | "full-v2" | "smoke-v3" | "full-v3" | "custom";
 
 export interface GuidedPromptPort {
   chooseConfiguration(): Promise<GuidedConfigurationChoice | symbol>;
@@ -86,6 +86,8 @@ async function chooseConfigPath(prompt: GuidedPromptPort): Promise<string> {
   if (typeof choice === "symbol") throw new GuidedRunCancelledError();
   if (choice === "smoke-v2") return "config/smoke.v2.json";
   if (choice === "full-v2") return "config/full.v2.json";
+  if (choice === "smoke-v3") return "config/smoke.v3.json";
+  if (choice === "full-v3") return "config/full.v3.json";
   const custom = await prompt.requestCustomConfigPath();
   if (typeof custom === "symbol") throw new GuidedRunCancelledError();
   return custom;

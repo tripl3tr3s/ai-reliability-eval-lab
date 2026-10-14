@@ -16,7 +16,7 @@ import {
 } from "./cli-ui.js";
 import { loadDataset } from "./dataset.js";
 import { loadExperimentConfig, planExperiment, runExperiment } from "./experiment.js";
-import { DEFAULT_GATE_CANDIDATE, runGate } from "./gate-command.js";
+import { gateDefaultsFor, runGate } from "./gate-command.js";
 import {
   GuidedRunCancelledError,
   GuidedRunDeclinedError,
@@ -50,11 +50,13 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
   if (parsed.command === "gate") {
+    const configPath = parsed.configPath ?? "config/full.v2.json";
+    const defaults = await gateDefaultsFor(configPath);
     const { report: gateReport } = await runGate({
       rawPath: parsed.rawPath ?? "runs/results.jsonl",
-      configPath: parsed.configPath ?? "config/full.v2.json",
-      thresholdsPath: parsed.thresholdsPath ?? "config/thresholds.v1.json",
-      candidate: parsed.candidate ?? DEFAULT_GATE_CANDIDATE,
+      configPath,
+      thresholdsPath: parsed.thresholdsPath ?? defaults.thresholdsPath,
+      candidate: parsed.candidate ?? defaults.candidate,
       outputDirectory: parsed.outputPath ?? "reports/generated/gate",
       ...(parsed.reference === undefined ? {} : { reference: parsed.reference }),
       ...(parsed.baselinePath === undefined ? {} : { baselinePath: parsed.baselinePath }),
@@ -183,6 +185,8 @@ function createGuidedPromptPort(): GuidedPromptPort {
       options: [
         { value: "smoke-v2" as const, label: "Smoke v2", hint: "24 jobs, recommended first run" },
         { value: "full-v2" as const, label: "Full v2", hint: "450 jobs" },
+        { value: "smoke-v3" as const, label: "Smoke v3 (5.5 lineup, Spanish)", hint: "20 jobs, run before Full v3" },
+        { value: "full-v3" as const, label: "Full v3 (5.5 lineup, Spanish)", hint: "900 jobs" },
         { value: "custom" as const, label: "Custom configuration" },
       ],
     }),

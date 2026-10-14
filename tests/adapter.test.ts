@@ -7,10 +7,13 @@ const rates = {
 };
 
 describe("AnthropicAdapter", () => {
-  it("pins the current Sonnet model and retains the dated Haiku model", () => {
+  it("pins the legacy Sonnet 5 and dated Haiku 4.5 models next to the 5.5 lineup", () => {
     expect(ANTHROPIC_MODELS).toEqual({
       haiku: "claude-haiku-4-5-20251001",
       sonnet: "claude-sonnet-5",
+      haiku55: "claude-haiku-5-5",
+      sonnet55: "claude-sonnet-5-5",
+      opus55: "claude-opus-5-5",
     });
   });
 

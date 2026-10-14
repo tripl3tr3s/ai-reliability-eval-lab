@@ -18,11 +18,13 @@
     "build": "tsc -p tsconfig.build.json",
     "check": "pnpm lint && pnpm type-check && pnpm test:coverage && pnpm dataset:validate && pnpm config:validate",
     "config:validate": "tsx src/cli.ts validate-config",
+    "dataset:build:v3": "tsx src/packs/sat-v3/dataset/build.ts",
     "dataset:validate": "tsx src/cli.ts validate-dataset",
     "demo:suspension": "tsx src/cli.ts suspension-demo",
     "eval": "tsx src/cli.ts run",
     "gate": "tsx src/cli.ts gate",
     "gate:mock": "pnpm mock:run --output runs/mock/results.jsonl && pnpm gate --raw runs/mock/results.jsonl --output reports/generated/mock-gate",
+    "gate:mock:v3": "pnpm mock:run --config config/full.v3.json --output runs/mock/v3-results.jsonl && pnpm gate --raw runs/mock/v3-results.jsonl --config config/full.v3.json --output reports/generated/mock-gate-v3",
     "lint": "eslint .",
     "mock:run": "tsx src/cli.ts mock-run",
     "report": "tsx src/cli.ts report",
@@ -31,7 +33,7 @@
     "test:coverage": "vitest run --coverage",
     "type-check": "tsc --noEmit",
     "typecheck": "tsc --noEmit",
-    "validate": "pnpm dataset:validate && pnpm config:validate"
+    "validate": "pnpm dataset:validate && pnpm config:validate && pnpm dataset:validate --manifest datasets/v3/manifest.json && pnpm config:validate --config config/full.v3.json && pnpm config:validate --config config/smoke.v3.json"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "0.65.0",

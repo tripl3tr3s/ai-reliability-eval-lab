@@ -1,0 +1,12 @@
+{
+  "dataset": "datasets/v3",
+  "configurations": ["prod-routed-5-5", "direct-sonnet-5-5"],
+  "repeats": 5,
+  "seed": 20261014,
+  "concurrency": 1,
+  "pricing": "config/pricing.v2.json",
+  "budgetUsd": 40,
+  "estimatedCostPerRunUsd": 0.04,
+  "promptVersion": "agent-prompt-v3",
+  "resourceVersion": "operational-resources-v3"
+}

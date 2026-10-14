@@ -53,8 +53,20 @@ export const MOCK_REASON = "Mock data from a scripted model, generated to verify
 const ROW_LEVEL_NOTE = "Intervals in this section are row-level bootstraps that treat every run as an independent sample. They are kept for continuity and are too narrow when repeats of a case agree. Use the case-clustered intervals below for decisions.";
 const escapeHtml = (value: string): string => value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
 
+/** Publishable minimums: every case of the dataset, at least two compared configurations, at least five repeats. */
+const MINIMUM_CONFIGURATIONS = 2;
+const MINIMUM_REPEATS = 5;
+export const LEGACY_REPORT_CONFIGURATIONS = ["direct-sonnet", "routed", "no-resource-injection"] as const;
+
+const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"] as const;
+const countWord = (count: number): string => NUMBER_WORDS[count] ?? String(count);
+
+export function pendingReason(caseCount: number, configurationCount: number): string {
+  return `Pending a complete ${caseCount}-case, ${countWord(configurationCount)}-configuration, five-repeat experiment.`;
+}
+
 export function experimentIsComplete(runs: readonly RawRun[], cases: readonly DatasetCase[], configurations: readonly string[], repeats: number): boolean {
-  if (cases.length !== 30 || configurations.length !== 3 || repeats !== 5 || runs.length !== cases.length * configurations.length * repeats) return false;
+  if (cases.length === 0 || configurations.length < MINIMUM_CONFIGURATIONS || repeats < MINIMUM_REPEATS || runs.length !== cases.length * configurations.length * repeats) return false;
   const keys = runs.map(({ caseId, configuration, repeat }) => `${caseId}:${configuration}:${repeat}`);
   if (new Set(keys).size !== keys.length || new Set(runs.map(({ runId }) => runId)).size !== runs.length) return false;
   if (runs.some((run) => run.outcome === "failed" || run.outcome === "bounded" || run.policyViolation || run.duplicateMutation)) return false;
@@ -64,7 +76,7 @@ export function experimentIsComplete(runs: readonly RawRun[], cases: readonly Da
   }));
 }
 
-export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase[], manifest: RunManifest, configurations = ["direct-sonnet", "routed", "no-resource-injection"]): { summary: ReportSummary; scores: readonly RunScore[]; markdown: string; html: string } {
+export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase[], manifest: RunManifest, configurations: readonly string[] = LEGACY_REPORT_CONFIGURATIONS): { summary: ReportSummary; scores: readonly RunScore[]; markdown: string; html: string } {
   const byId = new Map(cases.map((item) => [item.id, item]));
   const scores = [...runs].sort((a, b) => a.runId.localeCompare(b.runId)).map((run) => {
     const datasetCase = byId.get(run.caseId);
@@ -75,7 +87,7 @@ export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase
   const mock = containsMockRuns([...manifest.models, ...runs.flatMap(({ modelIds }) => modelIds ?? [])]);
   const summary: ReportSummary = {
     status: complete && !mock ? "complete" : "pending",
-    reason: mock ? MOCK_REASON : complete ? null : "Pending a complete 30-case, three-configuration, five-repeat experiment.",
+    reason: mock ? MOCK_REASON : complete ? null : pendingReason(cases.length, configurations.length),
     manifest,
     configurations: aggregateScores(scores, manifest.seed),
     statistics: computeRunStatistics(scores, runs, manifest.seed),
@@ -90,8 +102,8 @@ export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase
   return { summary, scores, markdown, html };
 }
 
-export async function writeReport(outputDirectory: string, runs: readonly RawRun[], cases: readonly DatasetCase[], manifest: RunManifest): Promise<ReportSummary> {
-  const report = buildReport(runs, cases, manifest);
+export async function writeReport(outputDirectory: string, runs: readonly RawRun[], cases: readonly DatasetCase[], manifest: RunManifest, configurations: readonly string[] = LEGACY_REPORT_CONFIGURATIONS): Promise<ReportSummary> {
+  const report = buildReport(runs, cases, manifest, configurations);
   await mkdir(outputDirectory, { recursive: true });
   const resultLines = report.scores.map((score) => JSON.stringify(score)).join("\n") + (report.scores.length > 0 ? "\n" : "");
   await Promise.all([

@@ -7,7 +7,7 @@ import { evaluateGate } from "./gate/decision.js";
 import { renderGateMarkdown, type GateReport } from "./gate/render.js";
 import { parseThresholds } from "./gate/thresholds.js";
 import { containsMockRuns, parseRawRuns } from "./raw-run.js";
-import { createSyntheticTools } from "./tools.js";
+import { packForDatasetVersion, writeToolNames } from "./packs/index.js";
 
 export interface GateCommandInput {
   readonly rawPath: string;
@@ -34,6 +34,17 @@ async function readHashed(path: string): Promise<{ text: string; sha256: string 
 export const DEFAULT_GATE_CANDIDATE = "routed";
 export const DEFAULT_GATE_REFERENCE = "direct-sonnet";
 
+/**
+ * Defaults that depend on the experiment's dataset: dataset v3 is gated with thresholds-v2 (severity rules v2,
+ * 90 cases) and compares the production-mirror arm with the Sonnet 5.5 reference.
+ */
+export async function gateDefaultsFor(configPath: string): Promise<{ thresholdsPath: string; candidate: string; reference: string }> {
+  const config = await loadExperimentConfig(configPath);
+  return config.dataset.endsWith("/v3")
+    ? { thresholdsPath: "config/thresholds.v2.json", candidate: "prod-routed-5-5", reference: "direct-sonnet-5-5" }
+    : { thresholdsPath: "config/thresholds.v1.json", candidate: DEFAULT_GATE_CANDIDATE, reference: DEFAULT_GATE_REFERENCE };
+}
+
 /** Reads raw JSONL, applies the versioned thresholds, and optionally writes gate.json and gate.md. */
 export async function runGate(input: GateCommandInput): Promise<{ report: GateReport; markdown: string }> {
   const thresholdsFile = await readHashed(input.thresholdsPath);
@@ -45,14 +56,14 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
   const raw = parseRawRuns(rawFile.text);
   const baselineFile = input.baselinePath === undefined ? null : await readHashed(input.baselinePath);
   const baseline = baselineFile === null ? null : parseRawRuns(baselineFile.text);
-  const referenceConfiguration = input.reference ?? (baseline ? input.candidate : DEFAULT_GATE_REFERENCE);
+  const referenceConfiguration = input.reference ?? (baseline ? input.candidate : (await gateDefaultsFor(input.configPath)).reference);
   if (!baseline && referenceConfiguration === input.candidate) throw new Error("Candidate and reference must differ unless a baseline file is given");
 
   const result = evaluateGate({
     thresholds,
     cases: dataset.cases,
     expectedRepeats: config.repeats,
-    writeTools: new Set(createSyntheticTools().filter(({ sideEffect }) => sideEffect === "simulated-write").map(({ name }) => name)),
+    writeTools: writeToolNames(packForDatasetVersion(dataset.version)),
     candidate: { source: input.rawPath, configuration: input.candidate, runs: raw.runs, invalidRows: raw.issues.length },
     reference: baseline
       ? { source: input.baselinePath!, configuration: referenceConfiguration, runs: baseline.runs, invalidRows: baseline.issues.length }

@@ -1,5 +1,7 @@
 # Runbook: full live benchmark run
 
+> Dataset v3 (`config/smoke.v3.json`, `config/full.v3.json`) is the current benchmark for the DISAI_Conta 5.5 lineup. The steps below are written for v2 and apply to v3 with these differences: run `config/smoke.v3.json` first (20 jobs, ceiling USD 2) and review every trace by hand for refusals, bounded runs, and router domains; set `MAX_EXPERIMENT_COST_USD=40` for the full run (900 jobs; about 68 percent of candidate-arm cases run on Opus 5.5, so replace the cost estimate with the smoke run's measured cost per job first); the gate defaults to `config/thresholds.v2.json` and compares `prod-routed-5-5` with `direct-sonnet-5-5`. The v3 smoke run also calibrates `V3_AGENT_POLICY` (run tokens and deadline) before any full run.
+
 How to run the full benchmark (`config/full.v2.json`), generate the report, run the gate, review, and promote a baseline. Everything before step 4 is free. Step 4 spends Anthropic Platform credit.
 
 | Field | Value |

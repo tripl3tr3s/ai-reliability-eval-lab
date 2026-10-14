@@ -56,5 +56,5 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
     ...runTimestamps(eventsText),
     rawResultReferences: [input.rawPath],
   };
-  return writeReport(input.outputDirectory, runs, dataset.cases, manifest);
+  return writeReport(input.outputDirectory, runs, dataset.cases, manifest, config.configurations);
 }

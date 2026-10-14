@@ -1,0 +1,14 @@
+{
+  "$schema": "./pricing.schema.json",
+  "version": "anthropic-2026-10-13-5-5-lineup",
+  "effectiveDate": "2026-10-13",
+  "sourceUrl": "https://platform.claude.com/docs/en/about-claude/pricing",
+  "currency": "USD",
+  "perMillionTokens": {
+    "claude-haiku-4-5-20251001": { "input": 1, "output": 5 },
+    "claude-sonnet-5": { "input": 2, "output": 10 },
+    "claude-haiku-5-5": { "input": 0.1, "output": 0.5, "longPrompt": { "thresholdTokens": 100000, "input": 0.5, "output": 2.5 } },
+    "claude-sonnet-5-5": { "input": 2, "output": 10 },
+    "claude-opus-5-5": { "input": 4, "output": 20 }
+  }
+}

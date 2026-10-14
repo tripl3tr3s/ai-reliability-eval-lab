@@ -1,4 +1,5 @@
-import type { DatasetCase, DatasetCaseV2 } from "./dataset.js";
+import { isV3Case, type AssertionTermV3, type DatasetCase, type DatasetCaseV2, type DatasetCaseV3 } from "./dataset.js";
+import { claimSupportedEs, containsAffirmedEs, containsAmount, containsIdentifier } from "./text-es.js";
 
 export interface EvidenceClaim { text: string; evidenceIds: readonly string[]; checkable?: boolean }
 export interface ScoredToolCall { name: string; input: unknown; evidenceId?: string; success?: boolean }
@@ -20,6 +21,9 @@ export interface RawRun {
   modelIds?: readonly string[];
   policyViolation?: boolean;
   duplicateMutation?: boolean;
+  /** Domain-routed arms only: the router's domain label and the executor tier it selected. */
+  routedDomain?: string;
+  tier?: "standard" | "advanced";
 }
 
 export interface RunScore {
@@ -138,6 +142,25 @@ export function scoreUnsupportedClaims(
   };
 }
 
+export function scoreUnsupportedClaimsV3(
+  claims: readonly EvidenceClaim[],
+  validEvidenceIds: readonly string[],
+  evidenceFacts: Readonly<Record<string, readonly string[]>> = {},
+  forbiddenClaims: readonly string[] = [],
+): { unsupported: number; checkable: number } {
+  const valid = new Set(validEvidenceIds);
+  const checkableClaims = claims.filter(({ checkable = true }) => checkable);
+  return {
+    checkable: checkableClaims.length,
+    unsupported: checkableClaims.filter(({ text, evidenceIds }) => {
+      if (forbiddenClaims.some((forbidden) => containsAffirmedEs(text, forbidden))) return true;
+      if (evidenceIds.length === 0 || evidenceIds.some((id) => !valid.has(id))) return true;
+      const linkedFacts = evidenceIds.flatMap((id) => evidenceFacts[id] ?? []);
+      return linkedFacts.length > 0 && !claimSupportedEs(text, linkedFacts.join(" "));
+    }).length,
+  };
+}
+
 function selectionMatches(run: RawRun, datasetCase: DatasetCase): boolean {
   if ("acceptedPlans" in datasetCase) return matchV2Plan(run, datasetCase).selectionPassed;
   const actual = run.toolCalls.map(({ name }) => name);
@@ -148,15 +171,39 @@ function selectionMatches(run: RawRun, datasetCase: DatasetCase): boolean {
 }
 
 type V2Plan = DatasetCaseV2["acceptedPlans"][number];
+type PlanCase = Pick<DatasetCaseV2, "acceptedPlans" | "forbiddenTools"> & { readonly allowedExtraCalls?: DatasetCaseV3["allowedExtraCalls"] };
 
-function matchV2Plan(run: RawRun, datasetCase: DatasetCaseV2): {
+/**
+ * v3 only: drops calls to declared extra read tools beyond what the plan itself uses, up to each tool's
+ * maxCount, so a reasonable extra read (for example a 69-B check before a payment) does not fail tool
+ * accuracy. Calls beyond the allowance stay and break the structural match.
+ */
+function withoutAllowedExtras(actual: readonly ScoredToolCall[], plan: V2Plan, extras: PlanCase["allowedExtraCalls"]): readonly ScoredToolCall[] {
+  if (!extras || extras.length === 0) return actual;
+  const planned = new Map<string, number>();
+  for (const { tool } of plan.calls) planned.set(tool, (planned.get(tool) ?? 0) + 1);
+  const budget = new Map(extras.map(({ tool, maxCount }) => [tool, maxCount]));
+  const seen = new Map<string, number>();
+  return actual.filter(({ name }) => {
+    const count = (seen.get(name) ?? 0) + 1;
+    seen.set(name, count);
+    const remaining = budget.get(name) ?? 0;
+    if (count > (planned.get(name) ?? 0) && remaining > 0) {
+      budget.set(name, remaining - 1);
+      return false;
+    }
+    return true;
+  });
+}
+
+function matchV2Plan(run: RawRun, datasetCase: PlanCase): {
   selectionPassed: boolean;
   matchedPlanId: string | null;
   argumentFieldsMatched: number;
   argumentFieldsTotal: number;
 } {
   const forbidden = run.toolCalls.some(({ name }) => datasetCase.forbiddenTools.includes(name));
-  const candidates = datasetCase.acceptedPlans.map((plan) => assessPlan(run.toolCalls, plan));
+  const candidates = datasetCase.acceptedPlans.map((plan) => assessPlan(withoutAllowedExtras(run.toolCalls, plan, datasetCase.allowedExtraCalls), plan));
   const structural = candidates
     .filter(({ structureMatches }) => structureMatches)
     .sort((left, right) => right.argumentFieldsMatched - left.argumentFieldsMatched)[0];
@@ -207,7 +254,23 @@ function alignCalls(actual: readonly ScoredToolCall[], plan: V2Plan): Array<Scor
   });
 }
 
+/** One v3 assertion term, matched with the Spanish rules in text-es.ts. */
+export function termPresentV3(answer: string, term: AssertionTermV3): boolean {
+  if (term.type === "text") return containsAffirmedEs(answer, term.includes);
+  if (term.type === "amount") return containsAmount(answer, term.value, term.currency);
+  return containsIdentifier(answer, term.value);
+}
+
+/** Why a v3 answer fails completion, or null when it passes the text checks. Used by scoring and dataset review. */
+export function v3AnswerFailure(answer: string, datasetCase: DatasetCaseV3): "missing_assertion" | "forbidden_claim" | "forbidden_value" | null {
+  if (datasetCase.forbiddenValues.some((term) => termPresentV3(answer, term))) return "forbidden_value";
+  if (datasetCase.forbiddenClaims.some((claim) => containsAffirmedEs(answer, claim))) return "forbidden_claim";
+  if (!datasetCase.requiredAssertions.some((alternative) => alternative.every((term) => termPresentV3(answer, term)))) return "missing_assertion";
+  return null;
+}
+
 function requiredAssertionsPass(answer: string, datasetCase: DatasetCase): boolean {
+  if (isV3Case(datasetCase)) return v3AnswerFailure(answer, datasetCase) === null;
   if ("requiredAssertions" in datasetCase) {
     return datasetCase.requiredAssertions.some((alternative) =>
       alternative.every(({ includes }) => semanticIncludes(answer, includes)),
@@ -264,7 +327,8 @@ export function scoreRun(run: RawRun, datasetCase: DatasetCase): RunScore {
     : 0;
   const argumentAccuracy = argumentFieldsTotal === 0 ? null : argumentFieldsMatched / argumentFieldsTotal;
   const factsPass = requiredAssertionsPass(run.answer, datasetCase);
-  const forbiddenPass = datasetCase.forbiddenClaims.every((claim) => !containsUnnegated(run.answer, claim));
+  // v3 checks forbidden claims and values inside requiredAssertionsPass with the Spanish rules.
+  const forbiddenPass = isV3Case(datasetCase) || datasetCase.forbiddenClaims.every((claim) => !containsUnnegated(run.answer, claim));
   const statePass = datasetCase.expectedState.every((assertion) => equal(getPath(run.finalState, assertion.path), assertion.equals));
   const outcomePass = "acceptedPlans" in datasetCase
     ? run.outcome === (datasetCase.category === "abstention" ? "abstained" : "completed")
@@ -273,7 +337,9 @@ export function scoreRun(run: RawRun, datasetCase: DatasetCase): RunScore {
   const recoveryPassed = datasetCase.metricApplicability.recovery
     ? completionPassed && !run.policyViolation && (!datasetCase.recoveryExpectations.noDuplicateMutation || !run.duplicateMutation)
     : null;
-  const unsupported = scoreUnsupportedClaims(run.claims, run.validEvidenceIds, run.evidenceFacts, datasetCase.forbiddenClaims);
+  const unsupported = isV3Case(datasetCase)
+    ? scoreUnsupportedClaimsV3(run.claims, run.validEvidenceIds, run.evidenceFacts, datasetCase.forbiddenClaims)
+    : scoreUnsupportedClaims(run.claims, run.validEvidenceIds, run.evidenceFacts, datasetCase.forbiddenClaims);
   return {
     runId: run.runId, caseId: run.caseId, configuration: run.configuration, repeat: run.repeat,
     selectionPassed, argumentFieldsMatched, argumentFieldsTotal, argumentAccuracy,
