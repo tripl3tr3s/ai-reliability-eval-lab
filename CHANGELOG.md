@@ -8,6 +8,14 @@ No complete live benchmark run exists yet. Nothing in this entry is a benchmark 
 
 ### Added
 
+- Dataset v3 (`datasets/v3`): 90 Mexican Spanish cases (20 lookup, 24 multi-tool, 18 recovery, 14 abstention, 14 confirmation) authored in `src/packs/sat-v3/dataset` and built with `pnpm dataset:build:v3`. Each case has a reference answer and counterexamples, all checked by tests. See [the decision record](docs/decisions/2026-10-14-dataset-v3-and-5-5-arms.md).
+- The sat-v3 domain pack: 17 synthetic tools named and shaped after the sat-mcp tools DISAI_Conta allowlists, with Spanish fixtures, HITL pending confirmations, and a domain router modeled on DISAI_Conta's.
+- Arms `prod-routed-5-5` (Haiku 5.5 router at low effort, Sonnet 5.5 at medium, Opus 5.5 at high for pagos and cumplimiento) and `direct-sonnet-5-5`, with `config/smoke.v3.json` and `config/full.v3.json`.
+- Pinned `claude-haiku-5-5`, `claude-sonnet-5-5`, and `claude-opus-5-5` with adaptive thinking, explicit effort, verbatim replay of assistant blocks, and refusal handling without fallbacks. `config/pricing.v2.json` with a long-prompt rate card.
+- Spanish matching for v3 (`src/text-es.ts`): negation scope, numeric amounts in common formats, whole-token identifiers. `forbiddenValues` and `allowedExtraCalls` in the v3 schema.
+- `severity-rules-v2` (adds `wrong_value`) and `config/thresholds.v2.json` for dataset v3. The gate picks thresholds and arms from the experiment's dataset.
+- `pnpm gate:mock:v3`, also in CI. `dataset` input on the live-smoke and full-benchmark workflows.
+- `DomainPack` interface (`src/packs`); the fiscal-v2 pack wraps the original fixtures and tools unchanged.
 - Statistics core in `src/stats`, with no dependencies: Wilson and Clopper-Pearson intervals with one-sided variants, exact binomial CDF, zero-failure sample size, rule of three, exact McNemar test, seeded cluster and paired percentile bootstrap, per-case pass@k and pass^k, and minimum detectable effect for paired binary comparisons. Tests use reference constants generated with scipy.
 - Case-level statistics in the report: case-clustered intervals, cases passing every repeat, pass@k and pass^k, cost and tokens, paired comparisons with exact McNemar and paired bootstrap intervals, and a section on what the sample size can and cannot detect.
 - Go-live gate (`pnpm gate`) driven by `config/thresholds.v1.json`: PASS (exit 0), BLOCK (1), INCONCLUSIVE (2), with JSON and Markdown summaries that record input hashes.
@@ -21,6 +29,11 @@ No complete live benchmark run exists yet. Nothing in this entry is a benchmark 
 
 ### Changed
 
+- Artifact uploads in the live-smoke and full-benchmark workflows run even when the benchmark fails, so partial traces are kept. Pages publishes only from a successful run.
+- Each arm names its own model slots; legacy arms keep resolving provider roles and their requests are unchanged.
+- The tool allowlist comes from the case's domain pack (unchanged for v1 and v2).
+- The report judges completeness against the experiment's own configurations instead of the three legacy arm names.
+- Provider request IDs are redacted from deadline error events.
 - `pnpm report` takes run timestamps from telemetry events (`--events`) instead of the wall clock, so the same raw JSONL yields byte-identical output. Without `--events` the timestamps read `unknown`.
 - `pnpm report` validates every raw row against a schema and reports the failing line.
 - Existing `ci95` fields in `summary.json` are unchanged but are now documented as row-level; the report body points to the case-clustered intervals for decisions.

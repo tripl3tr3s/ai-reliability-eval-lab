@@ -78,7 +78,7 @@ const ContentBlockSchema = z.union([
 const anthropicResponseSchema = z.object({
   model: z.string().min(1),
   stop_reason: z.string().nullable(),
-  stop_details: z.object({ category: z.string().nullable().optional() }).passthrough().nullable().optional(),
+  stop_details: z.object({ category: z.string().max(64).nullable().optional().catch(null) }).passthrough().nullable().optional(),
   usage: z.object({
     input_tokens: z.number().int().nonnegative(),
     output_tokens: z.number().int().nonnegative(),

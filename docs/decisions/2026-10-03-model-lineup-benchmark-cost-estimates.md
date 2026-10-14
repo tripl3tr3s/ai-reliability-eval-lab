@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-03 |
-| Status | Proposed, not implemented. No decision on configuration set or repeats yet. |
+| Status | Superseded on 2026-10-14 by [dataset v3 and the 5.5 arms](2026-10-14-dataset-v3-and-5-5-arms.md), which mirrors the production lineup and implements a Spanish, sat-mcp-shaped dataset (this record's Option 2). |
 | Related | [Post-mortem 2026-09-01](../postmortems/2026-09-01-full-benchmark-deadline-abort.md) |
 
 ## Context

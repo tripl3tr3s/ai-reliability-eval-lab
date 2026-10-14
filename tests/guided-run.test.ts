@@ -39,6 +39,18 @@ function prompts(overrides: Partial<GuidedPromptPort> = {}): GuidedPromptPort {
 }
 
 describe("guided run setup", () => {
+  it.each([["smoke-v3", "config/smoke.v3.json"], ["full-v3", "config/full.v3.json"]] as const)("maps the %s choice to %s", async (choice, path) => {
+    const loadConfig = vi.fn(async () => config);
+    await resolveGuidedRun({
+      isTTY: true,
+      prompt: prompts({ chooseConfiguration: vi.fn(async () => choice) }),
+      loadConfig,
+      planExperiment: vi.fn(async () => plan),
+      createArtifactPaths: vi.fn(async () => ({ resultsPath: "runs/r.jsonl", eventsPath: "runs/e.jsonl" })),
+    });
+    expect(loadConfig).toHaveBeenCalledWith(path);
+  });
+
   it("defaults to Smoke v2 and displays a complete preflight", async () => {
     const prompt = prompts();
     const loadConfig = vi.fn(async () => config);

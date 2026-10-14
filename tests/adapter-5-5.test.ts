@@ -205,3 +205,25 @@ describe("long-prompt rate card", () => {
     expect(costForUsage({ input: 2, output: 10 }, 12, 4)).toBe((12 * 2 + 4 * 10) / 1_000_000);
   });
 });
+
+describe("telemetry hygiene", () => {
+  it("bounds the refusal category from the provider", async () => {
+    const create = vi.fn().mockResolvedValue({ ...reply(ANTHROPIC_MODELS.opus55, [], "refusal"), stop_details: { type: "refusal", category: "x".repeat(500) } });
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates);
+    const response = await adapter.generate({ model: ANTHROPIC_MODELS.opus55, messages: [], tools: [], maxOutputTokens: 1024, signal: signal() });
+    expect(response.refusalCategory).toBeNull();
+  });
+
+  it("redacts provider request ids from the deadline error event", async () => {
+    const adapter = {
+      async generate(request: { signal: AbortSignal }) {
+        await new Promise((resolve) => request.signal.addEventListener("abort", resolve, { once: true }));
+        throw new Error('529 {"type":"error","request_id":"req_011CabcXYZ"}');
+      },
+    };
+    const result = await runAgent({ caseId: "d", seed: 1, prompt: "x", systemPrompt: "s", model: "m", adapter: adapter as never, tools: [], policy: { ...DEFAULT_AGENT_POLICY, deadlineMs: 20 } });
+    const event = result.events.find(({ type }) => type === "error");
+    expect(JSON.stringify(event)).not.toContain("req_011CabcXYZ");
+    expect(JSON.stringify(event)).toContain("req_[redacted]");
+  });
+});

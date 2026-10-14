@@ -185,6 +185,8 @@ function createGuidedPromptPort(): GuidedPromptPort {
       options: [
         { value: "smoke-v2" as const, label: "Smoke v2", hint: "24 jobs, recommended first run" },
         { value: "full-v2" as const, label: "Full v2", hint: "450 jobs" },
+        { value: "smoke-v3" as const, label: "Smoke v3 (5.5 lineup, Spanish)", hint: "20 jobs, run before Full v3" },
+        { value: "full-v3" as const, label: "Full v3 (5.5 lineup, Spanish)", hint: "900 jobs" },
         { value: "custom" as const, label: "Custom configuration" },
       ],
     }),

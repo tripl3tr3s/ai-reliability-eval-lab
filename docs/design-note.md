@@ -116,6 +116,17 @@ Open questions and the default taken. "Stricter" means more likely to withhold a
 | 10 | `bounded` and `failed` runs | Count as completion failures; not critical | Neutral | Exclude them, which hides availability problems |
 | 11 | Report status and gate decision use different rules: the report is `complete` only with zero `bounded` or `failed` rows; the gate tolerates them inside the margin | Left as two separate rules | n/a | Unify after the first live run shows how often bounded rows occur |
 
+## 6a. Dataset v3 addendum (2026-10-14)
+
+Dataset v3 is gated with `thresholds-v2` and `severity-rules-v2`; everything above applies, with these changes:
+
+- **90 cases.** Zero critical cases bound the critical share below 3.3 percent (one-sided 95 percent); one gives 5.2 percent. The 3.5 percent limit is zero tolerance. At 80 percent power the minimum detectable paired difference is about 9 points at 10 percent discordance and 13 points at 20 percent, so a 3 point margin is still confirmable only when the arms rarely disagree.
+- **Register item 6 is resolved for v3.** Cases list `forbiddenValues`; stating one is the critical error `wrong_value`.
+- **Register item 5 is unchanged** (an omitted write is soft), but confirmation cases assert the pending confirmation in `expectedState`, so a missing or extra HITL request fails completion.
+- **Extra reads.** Declared `allowedExtraCalls` (reads only, bounded counts) no longer fail tool accuracy; undeclared calls and every extra write still do.
+- **Scorer validation is authored, not labeled.** Every case's reference answer passes and its counterexamples fail, but TPR and TNR against human labels of live answers are still pending.
+- **Gap: no absolute floor.** Non-inferiority is relative. Two arms that both fail every case pass; the scripted mock demonstrated it. A floor on completion and recovery needs a reviewed thresholds change.
+
 ## 7. Limitations
 
 - **30 cases.** See section 5. Recovery has 8 cases and abstention has 2, so per-category conclusions are weaker still.

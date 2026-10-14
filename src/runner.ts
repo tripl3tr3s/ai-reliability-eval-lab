@@ -70,7 +70,8 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
         if (input.signal?.aborted) throw abortFailure(input.signal);
         // The provider SDK rejects with its own abort error, so the deadline is detected from our signal, not the error.
         if (!abort.signal.aborted) throw error;
-        await emit('error', { phase: 'model', iteration, message: error instanceof Error ? error.message : String(error) });
+        // Provider error messages can embed request IDs ("req_..."); telemetry must never record them.
+        await emit('error', { phase: 'model', iteration, message: (error instanceof Error ? error.message : String(error)).replace(/req_[A-Za-z0-9]+/gu, 'req_[redacted]') });
         return boundedError('Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
       }
       tokens += response.usage.inputTokens + response.usage.outputTokens;

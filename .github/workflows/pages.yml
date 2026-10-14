@@ -29,6 +29,14 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      # Failed benchmark runs also upload their partial artifacts; only a successful run may be published.
+      - name: Require a successful source run
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_ID: ${{ inputs.artifact_run_id }}
+        run: |
+          conclusion=$(gh run view "$RUN_ID" --repo "$GITHUB_REPOSITORY" --json conclusion --jq .conclusion)
+          test "$conclusion" = "success" || { echo "Run $RUN_ID concluded '$conclusion'; refusing to publish"; exit 1; }
       - uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.artifact_name }}
