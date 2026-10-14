@@ -26,6 +26,8 @@ export const RawRunSchema = z.object({
   modelIds: z.array(z.string()).optional(),
   policyViolation: z.boolean().optional(),
   duplicateMutation: z.boolean().optional(),
+  routedDomain: z.string().min(1).optional(),
+  tier: z.enum(["standard", "advanced"]).optional(),
 }).passthrough();
 
 export interface RawRunIssue { readonly line: number; readonly message: string }

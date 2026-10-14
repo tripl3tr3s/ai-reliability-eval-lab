@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { compareBaseline, comparePairedBaseline } from "../src/baseline.js";
 import { loadDataset } from "../src/dataset.js";
-import { buildReport, experimentIsComplete, replayReport, type RunManifest } from "../src/report.js";
+import { buildReport, experimentIsComplete, pendingReason, replayReport, type RunManifest } from "../src/report.js";
 import type { ConfigurationSummary, RawRun, RunScore } from "../src/scoring.js";
 
 const metric = (value: number) => ({ value, numerator: value, denominator: 1, ci95: null });
@@ -52,6 +52,22 @@ describe("reports and baselines", () => {
     expect(experimentIsComplete(runs.map((run, index) => index === 0 ? { ...run, outcome: "failed" } : run), cases, configurations, 5)).toBe(false);
     expect(experimentIsComplete(runs.map((run, index) => index === 1 ? { ...run, policyViolation: true } : run), cases, configurations, 5)).toBe(false);
     expect(experimentIsComplete(runs.map((run, index) => index === 2 ? { ...run, caseId: runs[1]!.caseId, configuration: runs[1]!.configuration, repeat: runs[1]!.repeat } : run), cases, configurations, 5)).toBe(false);
+  });
+
+  it("keeps the v2 pending text byte-identical and derives it for other experiment shapes", () => {
+    expect(pendingReason(30, 3)).toBe("Pending a complete 30-case, three-configuration, five-repeat experiment.");
+    expect(pendingReason(90, 2)).toBe("Pending a complete 90-case, two-configuration, five-repeat experiment.");
+  });
+
+  it("judges completeness against the experiment's own configurations, not the three legacy arms", async () => {
+    const cases = (await loadDataset()).cases;
+    const configurations = ["prod-routed-5-5", "direct-sonnet-5-5"];
+    const runs: RawRun[] = configurations.flatMap((configuration) => cases.flatMap((datasetCase) => Array.from({ length: 5 }, (_, repeat) => ({ runId: `${configuration}:${datasetCase.id}:${repeat}`, caseId: datasetCase.id, configuration, repeat, outcome: "completed" as const, answer: "ok", finalState: {}, claims: [], toolCalls: [], validEvidenceIds: [], latencyMs: 1, costUsd: 0 }))));
+    expect(experimentIsComplete(runs, cases, configurations, 5)).toBe(true);
+    expect(experimentIsComplete(runs, cases, configurations.slice(0, 1), 5)).toBe(false);
+    expect(experimentIsComplete(runs.filter(({ repeat }) => repeat < 2), cases, configurations, 2)).toBe(false);
+    expect(buildReport(runs, cases, manifest, configurations).summary.status).toBe("complete");
+    expect(buildReport(runs, cases, manifest).summary.status).toBe("pending");
   });
 
   it("uses paired case and repeat deltas and rejects missing pairs", () => {

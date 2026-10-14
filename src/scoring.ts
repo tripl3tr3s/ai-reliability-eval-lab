@@ -20,6 +20,9 @@ export interface RawRun {
   modelIds?: readonly string[];
   policyViolation?: boolean;
   duplicateMutation?: boolean;
+  /** Domain-routed arms only: the router's domain label and the executor tier it selected. */
+  routedDomain?: string;
+  tier?: "standard" | "advanced";
 }
 
 export interface RunScore {

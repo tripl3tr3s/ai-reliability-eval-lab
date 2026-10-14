@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { AgentPolicy, ModelAdapter, ModelRoles, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
-import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_AGENT_POLICY, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, modelForRoutedTask } from "./config.js";
+import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, resolveSlot, type AgentConfiguration, type ResolvedSlot } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
 import type { FaultKind } from "./faults.js";
 import { FINAL_RESULT_INSTRUCTION, runAgent } from "./runner.js";
@@ -10,6 +10,7 @@ import { scoreRun, type RawRun, type ScoredToolCall } from "./scoring.js";
 import { createSyntheticTools } from "./tools.js";
 import { operationalResourceText } from "./fixtures.js";
 import { capabilitiesFor, wrapAdapter } from "./providers/capabilities.js";
+import { DOMAIN_ROUTER_V3_PROMPT, parseRoutedDomain, tierForDomain, type ExecutionTier, type RouterDomain } from "./packs/sat-v3/router.js";
 
 const ExperimentFileSchema = z.object({
   dataset: z.string().min(1),
@@ -174,7 +175,7 @@ export async function runExperiment(input: RunExperimentInput): Promise<readonly
       const eventFields = jobEventFields(job, index, plan.totalJobs);
       const budgetCeilingUsd = plan.budgetCeilingUsd;
       await emitProgress({ type: "job_started", ...eventFields, elapsedMs: jobStarted - started });
-      let currentPhase: ExperimentPhase = job.configuration === "direct-sonnet" ? "model" : "routing";
+      let currentPhase: ExperimentPhase = AGENT_CONFIGURATIONS[job.configuration].router ? "routing" : "model";
       const phase = async (value: ExperimentPhase): Promise<void> => {
         currentPhase = value;
         await emitProgress({ type: "phase_changed", ...eventFields, phase: value, elapsedMs: performance.now() - started, observedCostUsd: observedSpend });
@@ -283,10 +284,10 @@ async function runOne(
 ): Promise<RawRun> {
   const { datasetCase, configuration, repeat, runId } = job;
   const configured = AGENT_CONFIGURATIONS[configuration];
-  if (configuration !== "direct-sonnet") await onPhase?.("routing");
-  const routing = configuration === "direct-sonnet"
-    ? { model: models.executor, costUsd: 0, tokens: 0, latencyMs: 0, modelId: null }
-    : await routeModel(datasetCase.prompt, adapter, models, signal);
+  if (configured.router) await onPhase?.("routing");
+  const routing: Routing = configured.router
+    ? await routeModel(configured, datasetCase.prompt, adapter, models, signal)
+    : { executor: resolveSlot(configured.executor, models), costUsd: 0, tokens: 0, latencyMs: 0, modelId: null };
   const faultMap = new Map(datasetCase.faultSchedule.map((fault) => [
     `${fault.tool}:${fault.invocation}`,
     faultName(fault.type),
@@ -308,7 +309,7 @@ async function runOne(
   const finalInstruction = experiment.promptVersion === LEGACY_PROMPT_VERSION
     ? "Return JSON with outcome, answer, and evidence-linked claims."
     : FINAL_RESULT_INSTRUCTION;
-  const policy = { ...DEFAULT_AGENT_POLICY, maxCostUsd: Math.min(DEFAULT_AGENT_POLICY.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
+  const policy = { ...configured.policy, maxCostUsd: Math.min(configured.policy.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
   const progressAdapter = wrapAdapter(adapter, async (request) => {
     await onPhase?.("model");
     return adapter.generate(request);
@@ -319,7 +320,8 @@ async function runOne(
     seed: experiment.seed + repeat,
     prompt: datasetCase.prompt,
     systemPrompt: `You are a bounded fiscal operations agent. ${resources} ${finalInstruction}`,
-    model: routing.model,
+    model: routing.executor.model,
+    ...(routing.executor.effort === undefined ? {} : { effort: routing.executor.effort }),
     adapter: progressAdapter,
     tools,
     policy,
@@ -347,6 +349,7 @@ async function runOne(
     modelIds: [...(routing.modelId ? [routing.modelId] : []), ...result.modelIds],
     policyViolation: result.outcome === "bounded",
     duplicateMutation: hasDuplicateMutation(result.finalState.followUps),
+    ...(routing.domain === undefined ? {} : { routedDomain: routing.domain, tier: routing.tier }),
   };
   await onPhase?.("scoring");
   if (telemetry) {
@@ -363,24 +366,47 @@ async function runOne(
   return rawRun;
 }
 
-async function routeModel(prompt: string, adapter: ModelAdapter, models: ModelRoles, signal?: AbortSignal): Promise<{ model: string; costUsd: number; tokens: number; latencyMs: number; modelId: string }> {
+interface Routing {
+  readonly executor: ResolvedSlot;
+  readonly costUsd: number;
+  readonly tokens: number;
+  readonly latencyMs: number;
+  readonly modelId: string | null;
+  readonly domain?: RouterDomain;
+  readonly tier?: ExecutionTier;
+}
+
+const COMPLEXITY_ROUTER_PROMPT = "Classify as simple-read-only, multi-step, recovery, or simulated-write. Return only the label.";
+
+async function routeModel(configured: AgentConfiguration, prompt: string, adapter: ModelAdapter, models: ModelRoles, signal?: AbortSignal): Promise<Routing> {
   throwIfAborted(signal);
+  const router = configured.router!;
+  const slot = resolveSlot(router.slot, models);
+  const byDomain = router.kind === "domain-v3";
   const response = await adapter.generate({
-    model: models.router,
-    ...(capabilitiesFor(adapter, models.router).acceptsTemperature ? { temperature: 0 } : {}),
-    maxOutputTokens: 40,
+    model: slot.model,
+    ...(capabilitiesFor(adapter, slot.model).acceptsTemperature ? { temperature: 0 } : {}),
+    ...(slot.effort === undefined ? {} : { effort: slot.effort }),
+    // Adaptive-thinking routers spend part of max_tokens on thinking before the label.
+    maxOutputTokens: byDomain ? 1_024 : 40,
     signal: signal ?? new AbortController().signal,
     tools: [],
-    messages: [{ role: "system", content: "Classify as simple-read-only, multi-step, recovery, or simulated-write. Return only the label." }, { role: "user", content: prompt }],
+    messages: [{ role: "system", content: byDomain ? DOMAIN_ROUTER_V3_PROMPT : COMPLEXITY_ROUTER_PROMPT }, { role: "user", content: prompt }],
   });
-  const label = response.text.trim();
-  return {
-    model: modelForRoutedTask(label === "simple-read-only" || label === "recovery" || label === "simulated-write" ? label : "multi-step", models),
+  const metered = {
     costUsd: response.usage.costUsd,
     tokens: response.usage.inputTokens + response.usage.outputTokens,
     latencyMs: response.latencyMs,
     modelId: response.modelId,
   };
+  if (byDomain) {
+    const domain = parseRoutedDomain(response.text);
+    const tier = tierForDomain(domain);
+    const executor = tier === "advanced" && configured.advancedExecutor ? configured.advancedExecutor : configured.executor;
+    return { ...metered, executor: resolveSlot(executor, models), domain, tier };
+  }
+  const simple = response.text.trim() === "simple-read-only" && configured.simpleExecutor !== undefined;
+  return { ...metered, executor: resolveSlot(simple ? configured.simpleExecutor! : configured.executor, models) };
 }
 
 export function extractToolCalls(events: readonly RunnerEvent[]): ScoredToolCall[] {
