@@ -1,0 +1,996 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Anthropic request contract > sends an unchanged request sequence for haiku execution 1`] = `
+[
+  {
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": "Find invoice INV-001 and report its total.",
+        "role": "user",
+      },
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are a bounded fiscal operations agent.",
+    "temperature": 0,
+    "tools": [
+      {
+        "description": "Search synthetic fiscal documents",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentType": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "query": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "name": "search_documents",
+      },
+      {
+        "description": "Get one document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "documentId",
+          ],
+          "type": "object",
+        },
+        "name": "get_document",
+      },
+      {
+        "description": "List payments",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+            "unmatchedOnly": {
+              "default": false,
+              "type": "boolean",
+            },
+          },
+          "type": "object",
+        },
+        "name": "list_payments",
+      },
+      {
+        "description": "Idempotently simulate matching a payment to a document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "paymentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "paymentId",
+            "documentId",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "match_payment",
+      },
+      {
+        "description": "Check synthetic SAT status",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "check_supplier_status",
+      },
+      {
+        "description": "Analyze EFOS propagation and billing carousels",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "maxDepth": {
+              "default": 3,
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer",
+            },
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "analyze_supplier_network",
+      },
+      {
+        "description": "Read an operational policy",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "policyId": {
+              "enum": [
+                "supplier-risk",
+                "payment-reconciliation",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "policyId",
+          ],
+          "type": "object",
+        },
+        "name": "get_operational_policy",
+      },
+      {
+        "description": "Create an idempotent simulated follow-up",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "reason": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "supplierRfc",
+            "reason",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "create_follow_up",
+      },
+    ],
+  },
+  {
+    "max_tokens": 4096,
+    "messages": [
+      {
+        "content": "Find invoice INV-001 and report its total.",
+        "role": "user",
+      },
+      {
+        "content": [
+          {
+            "id": "call-1",
+            "input": {
+              "documentId": "INV-001",
+            },
+            "name": "get_document",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      {
+        "content": [
+          {
+            "content": "{"evidenceId":"case:get_document:1","provenance":"synthetic:v2","freshAt":"2026-01-01T00:00:00.000Z","ok":true,"data":{"id":"INV-001","type":"invoice","supplierRfc":"RFC01","total":1160,"currency":"MXN","date":"2026-01-10","text":"Consulting services January"}}",
+            "tool_use_id": "call-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+    ],
+    "model": "claude-haiku-4-5-20251001",
+    "system": "You are a bounded fiscal operations agent.",
+    "temperature": 0,
+    "tools": [
+      {
+        "description": "Search synthetic fiscal documents",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentType": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "query": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "name": "search_documents",
+      },
+      {
+        "description": "Get one document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "documentId",
+          ],
+          "type": "object",
+        },
+        "name": "get_document",
+      },
+      {
+        "description": "List payments",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+            "unmatchedOnly": {
+              "default": false,
+              "type": "boolean",
+            },
+          },
+          "type": "object",
+        },
+        "name": "list_payments",
+      },
+      {
+        "description": "Idempotently simulate matching a payment to a document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "paymentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "paymentId",
+            "documentId",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "match_payment",
+      },
+      {
+        "description": "Check synthetic SAT status",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "check_supplier_status",
+      },
+      {
+        "description": "Analyze EFOS propagation and billing carousels",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "maxDepth": {
+              "default": 3,
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer",
+            },
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "analyze_supplier_network",
+      },
+      {
+        "description": "Read an operational policy",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "policyId": {
+              "enum": [
+                "supplier-risk",
+                "payment-reconciliation",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "policyId",
+          ],
+          "type": "object",
+        },
+        "name": "get_operational_policy",
+      },
+      {
+        "description": "Create an idempotent simulated follow-up",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "reason": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "supplierRfc",
+            "reason",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "create_follow_up",
+      },
+    ],
+  },
+]
+`;
+
+exports[`Anthropic request contract > sends an unchanged request sequence for sonnet execution 1`] = `
+[
+  {
+    "max_tokens": 8192,
+    "messages": [
+      {
+        "content": "Find invoice INV-001 and report its total.",
+        "role": "user",
+      },
+    ],
+    "model": "claude-sonnet-5",
+    "system": "You are a bounded fiscal operations agent.",
+    "tools": [
+      {
+        "description": "Search synthetic fiscal documents",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentType": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "query": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "name": "search_documents",
+      },
+      {
+        "description": "Get one document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "documentId",
+          ],
+          "type": "object",
+        },
+        "name": "get_document",
+      },
+      {
+        "description": "List payments",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+            "unmatchedOnly": {
+              "default": false,
+              "type": "boolean",
+            },
+          },
+          "type": "object",
+        },
+        "name": "list_payments",
+      },
+      {
+        "description": "Idempotently simulate matching a payment to a document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "paymentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "paymentId",
+            "documentId",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "match_payment",
+      },
+      {
+        "description": "Check synthetic SAT status",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "check_supplier_status",
+      },
+      {
+        "description": "Analyze EFOS propagation and billing carousels",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "maxDepth": {
+              "default": 3,
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer",
+            },
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "analyze_supplier_network",
+      },
+      {
+        "description": "Read an operational policy",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "policyId": {
+              "enum": [
+                "supplier-risk",
+                "payment-reconciliation",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "policyId",
+          ],
+          "type": "object",
+        },
+        "name": "get_operational_policy",
+      },
+      {
+        "description": "Create an idempotent simulated follow-up",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "reason": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "supplierRfc",
+            "reason",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "create_follow_up",
+      },
+    ],
+  },
+  {
+    "max_tokens": 8192,
+    "messages": [
+      {
+        "content": "Find invoice INV-001 and report its total.",
+        "role": "user",
+      },
+      {
+        "content": [
+          {
+            "id": "call-1",
+            "input": {
+              "documentId": "INV-001",
+            },
+            "name": "get_document",
+            "type": "tool_use",
+          },
+        ],
+        "role": "assistant",
+      },
+      {
+        "content": [
+          {
+            "content": "{"evidenceId":"case:get_document:1","provenance":"synthetic:v2","freshAt":"2026-01-01T00:00:00.000Z","ok":true,"data":{"id":"INV-001","type":"invoice","supplierRfc":"RFC01","total":1160,"currency":"MXN","date":"2026-01-10","text":"Consulting services January"}}",
+            "tool_use_id": "call-1",
+            "type": "tool_result",
+          },
+        ],
+        "role": "user",
+      },
+    ],
+    "model": "claude-sonnet-5",
+    "system": "You are a bounded fiscal operations agent.",
+    "tools": [
+      {
+        "description": "Search synthetic fiscal documents",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentType": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "query": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+          },
+          "type": "object",
+        },
+        "name": "search_documents",
+      },
+      {
+        "description": "Get one document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "documentId",
+          ],
+          "type": "object",
+        },
+        "name": "get_document",
+      },
+      {
+        "description": "List payments",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "type": "string",
+            },
+            "unmatchedOnly": {
+              "default": false,
+              "type": "boolean",
+            },
+          },
+          "type": "object",
+        },
+        "name": "list_payments",
+      },
+      {
+        "description": "Idempotently simulate matching a payment to a document",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "documentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "paymentId": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "paymentId",
+            "documentId",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "match_payment",
+      },
+      {
+        "description": "Check synthetic SAT status",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "check_supplier_status",
+      },
+      {
+        "description": "Analyze EFOS propagation and billing carousels",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "maxDepth": {
+              "default": 3,
+              "maximum": 6,
+              "minimum": 1,
+              "type": "integer",
+            },
+            "rfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "rfc",
+          ],
+          "type": "object",
+        },
+        "name": "analyze_supplier_network",
+      },
+      {
+        "description": "Read an operational policy",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "policyId": {
+              "enum": [
+                "supplier-risk",
+                "payment-reconciliation",
+              ],
+              "type": "string",
+            },
+          },
+          "required": [
+            "policyId",
+          ],
+          "type": "object",
+        },
+        "name": "get_operational_policy",
+      },
+      {
+        "description": "Create an idempotent simulated follow-up",
+        "input_schema": {
+          "$schema": "http://json-schema.org/draft-07/schema#",
+          "additionalProperties": false,
+          "properties": {
+            "idempotencyKey": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "reason": {
+              "minLength": 1,
+              "type": "string",
+            },
+            "supplierRfc": {
+              "minLength": 1,
+              "type": "string",
+            },
+          },
+          "required": [
+            "supplierRfc",
+            "reason",
+            "idempotencyKey",
+          ],
+          "type": "object",
+        },
+        "name": "create_follow_up",
+      },
+    ],
+  },
+]
+`;
+
+exports[`Anthropic request contract > sends an unchanged routing request and routed execution through the experiment loop 1`] = `
+[
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 40,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": true,
+    "systemLength": 94,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 40,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": true,
+    "systemLength": 94,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 40,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": true,
+    "systemLength": 94,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 40,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": true,
+    "systemLength": 94,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 4096,
+    "model": "claude-haiku-4-5-20251001",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": 0,
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+  {
+    "maxTokens": 8192,
+    "model": "claude-sonnet-5",
+    "routing": false,
+    "systemLength": 573,
+    "temperature": "omitted",
+  },
+]
+`;
+
+exports[`Anthropic request contract > sends an unchanged routing request and routed execution through the experiment loop 2`] = `
+{
+  "max_tokens": 40,
+  "messages": [
+    {
+      "content": "Find invoice INV-011, list payments, and match PAY-011.",
+      "role": "user",
+    },
+  ],
+  "model": "claude-haiku-4-5-20251001",
+  "system": "Classify as simple-read-only, multi-step, recovery, or simulated-write. Return only the label.",
+  "temperature": 0,
+  "tools": [],
+}
+`;

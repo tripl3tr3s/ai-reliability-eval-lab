@@ -3,7 +3,9 @@ import { zodToJsonSchema } from 'zod-to-json-schema';
 import type { AgentPolicy, AgentResult, ModelAdapter, NormalizedMessage, RunnerEvent, TelemetrySink, ToolDefinition, ToolEnvelope } from './contracts.js';
 import { ToolEnvelopeSchema } from './contracts.js';
 import { createCaseState } from './tools.js';
-import { ANTHROPIC_MODELS } from './adapter.js';
+import { NORMALIZED_STOP_REASONS } from './contracts.js';
+import { encodeAssistantTurn } from './providers/assistant-turn.js';
+import { capabilitiesFor } from './providers/capabilities.js';
 
 const FinalSchema = z.object({ outcome: z.enum(['completed', 'abstained']), answer: z.string(), claims: z.array(z.object({ claim: z.string(), evidenceIds: z.array(z.string()) })) });
 
@@ -56,10 +58,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
   try {
     for (let iteration = 1; iteration <= input.policy.maxIterations; iteration += 1) {
       if (abort.signal.aborted || performance.now() - started >= input.policy.deadlineMs) return boundedError('Deadline exceeded', state, events, tokens, costUsd, modelIds, started);
-      const perCallOutputLimit = input.model === ANTHROPIC_MODELS.sonnet ? 8_192 : 4_096;
+      const capabilities = capabilitiesFor(input.adapter, input.model);
+      const perCallOutputLimit = capabilities.maxOutputTokensPerCall;
       let response: Awaited<ReturnType<ModelAdapter['generate']>>;
       try {
-        response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(input.model === ANTHROPIC_MODELS.haiku ? { temperature: 0 } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
+        response = await input.adapter.generate({ messages, tools: input.tools.filter((tool) => input.policy.allowedTools.includes(tool.name)).map((tool) => ({ name: tool.name, description: tool.description, inputSchema: zodToJsonSchema(tool.inputSchema, { $refStrategy: 'none' }) as Record<string, unknown> })), model: input.model, ...(capabilities.acceptsTemperature && capabilities.defaultTemperature !== undefined ? { temperature: capabilities.defaultTemperature } : {}), maxOutputTokens: Math.max(1, Math.min(perCallOutputLimit, input.policy.maxTokens - tokens)), signal: abort.signal });
       } catch (error) {
         if (input.signal?.aborted) throw abortFailure(input.signal);
         // The provider SDK rejects with its own abort error, so the deadline is detected from our signal, not the error.
@@ -71,11 +74,11 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       costUsd += response.usage.costUsd;
       modelIds.push(response.modelId);
       await emit('model', { iteration, modelId: response.modelId, stopReason: response.stopReason, tokens, costUsd });
-      if (response.stopReason === 'max_tokens') return boundedError('Model output token limit reached', state, events, tokens, costUsd, modelIds, started);
+      if (response.stopReason === NORMALIZED_STOP_REASONS.outputLimit) return boundedError('Model output token limit reached', state, events, tokens, costUsd, modelIds, started);
       if (tokens > input.policy.maxTokens) return boundedError('Token ceiling exceeded', state, events, tokens, costUsd, modelIds, started);
       if (costUsd > input.policy.maxCostUsd) return boundedError('Cost ceiling exceeded', state, events, tokens, costUsd, modelIds, started);
       if (Buffer.byteLength(response.text) > input.policy.maxOutputBytes) return boundedError('Output size exceeded', state, events, tokens, costUsd, modelIds, started);
-      messages.push({ role: 'assistant', content: JSON.stringify({ text: response.text, toolCalls: response.toolCalls }) });
+      messages.push({ role: 'assistant', content: encodeAssistantTurn(response) });
       if (response.toolCalls.length > 0) {
         for (const call of response.toolCalls) {
           if (input.signal?.aborted) throw abortFailure(input.signal);

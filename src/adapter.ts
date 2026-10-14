@@ -1,11 +1,24 @@
 import { z } from "zod";
-import type { ModelAdapter, ModelRequest, ModelResponse } from "./contracts.js";
+import { ModelProviderError, providerErrorCodeForStatus, type ModelAdapter, type ModelCapabilities, type ModelRequest, type ModelResponse, type ModelRoles } from "./contracts.js";
+import { decodeAssistantTurn } from "./providers/assistant-turn.js";
 import type { ModelRate } from "./pricing.js";
 
 export const ANTHROPIC_MODELS = {
   haiku: "claude-haiku-4-5-20251001",
   sonnet: "claude-sonnet-5",
 } as const;
+
+/** Provider rules for the pinned models. Sonnet 5 rejects temperature (adaptive thinking) and gets a larger per-call output allowance. */
+export const ANTHROPIC_MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = Object.freeze({
+  [ANTHROPIC_MODELS.haiku]: { provider: "anthropic", acceptsTemperature: true, defaultTemperature: 0, maxOutputTokensPerCall: 4_096, toolCalling: true, structuredOutput: "prompt" },
+  [ANTHROPIC_MODELS.sonnet]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 8_192, toolCalling: true, structuredOutput: "prompt" },
+});
+
+export const ANTHROPIC_MODEL_ROLES: ModelRoles = Object.freeze({
+  executor: ANTHROPIC_MODELS.sonnet,
+  router: ANTHROPIC_MODELS.haiku,
+  simpleExecutor: ANTHROPIC_MODELS.haiku,
+});
 
 type AnthropicClient = {
   messages: {
@@ -72,6 +85,20 @@ export class AnthropicAdapter implements ModelAdapter {
     private readonly logger: AnthropicAdapterLogger = stderrLogger,
   ) {}
 
+  capabilities(model: string): ModelCapabilities {
+    const capabilities = ANTHROPIC_MODEL_CAPABILITIES[model];
+    if (!capabilities) throw new Error(`Unpinned Anthropic model: ${model}`);
+    return capabilities;
+  }
+
+  private async create(body: Record<string, unknown>, options: { signal: AbortSignal }): Promise<unknown> {
+    try {
+      return await this.client.messages.create(body, options);
+    } catch (error) {
+      throw normalizeAnthropicError(error);
+    }
+  }
+
   async generate(request: ModelRequest): Promise<ModelResponse> {
     if (!Object.values(ANTHROPIC_MODELS).includes(request.model as never)) {
       throw new Error(`Unpinned Anthropic model: ${request.model}`);
@@ -82,7 +109,7 @@ export class AnthropicAdapter implements ModelAdapter {
     const rate = this.rates[request.model];
     if (!rate) throw new Error(`Missing pricing rate for model: ${request.model}`);
     const started = performance.now();
-    const raw = await this.client.messages.create(
+    const raw = await this.create(
       {
         model: request.model,
         max_tokens: request.maxOutputTokens,
@@ -99,7 +126,9 @@ export class AnthropicAdapter implements ModelAdapter {
       },
       { signal: request.signal },
     );
-    const response = anthropicResponseSchema.parse(raw);
+    const validated = anthropicResponseSchema.safeParse(raw);
+    if (!validated.success) throw new ModelProviderError(validated.error.message, { code: "invalid_response", provider: "anthropic", cause: validated.error });
+    const response = validated.data;
     for (const block of response.content) {
       if (!knownContentTypes.has(block.type)) {
         try {
@@ -135,26 +164,34 @@ export class AnthropicAdapter implements ModelAdapter {
   }
 }
 
+/** Maps an Anthropic SDK failure onto the provider-neutral error. The message is kept unchanged. */
+export function normalizeAnthropicError(error: unknown): ModelProviderError {
+  if (error instanceof ModelProviderError) return error;
+  const message = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : "";
+  const status = typeof (error as { status?: unknown } | null)?.status === "number" ? (error as { status: number }).status : undefined;
+  const code = name === "APIUserAbortError" || name === "AbortError"
+    ? "aborted"
+    : name === "APIConnectionTimeoutError"
+      ? "timeout"
+      : status !== undefined ? providerErrorCodeForStatus(status) : name === "APIConnectionError" ? "server" : "unknown";
+  return new ModelProviderError(message, { code, provider: "anthropic", cause: error, ...(status === undefined ? {} : { status }) });
+}
+
 function toAnthropicMessage(message: ModelRequest["messages"][number]): Record<string, unknown> {
   if (message.role === "tool") {
     return { role: "user", content: [{ type: "tool_result", tool_use_id: message.toolCallId, content: message.content }] };
   }
   if (message.role === "assistant") {
-    try {
-      const value = z.object({
-        text: z.string(),
-        toolCalls: z.array(z.object({ id: z.string(), name: z.string(), input: z.unknown() })),
-      }).parse(JSON.parse(message.content));
-      return {
-        role: "assistant",
-        content: [
-          ...(value.text.length > 0 ? [{ type: "text", text: value.text }] : []),
-          ...value.toolCalls.map((call) => ({ type: "tool_use", id: call.id, name: call.name, input: call.input })),
-        ],
-      };
-    } catch {
-      return { role: "assistant", content: message.content };
-    }
+    const turn = decodeAssistantTurn(message.content);
+    if (turn === null) return { role: "assistant", content: message.content };
+    return {
+      role: "assistant",
+      content: [
+        ...(turn.text.length > 0 ? [{ type: "text", text: turn.text }] : []),
+        ...turn.toolCalls.map((call) => ({ type: "tool_use", id: call.id, name: call.name, input: call.input })),
+      ],
+    };
   }
   return { role: "user", content: message.content };
 }

@@ -1,12 +1,10 @@
 #!/usr/bin/env node
-import { createHash } from "node:crypto";
 import { realpathSync } from "node:fs";
-import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import Anthropic from "@anthropic-ai/sdk";
 import * as prompts from "@clack/prompts";
 import { z } from "zod";
-import { AnthropicAdapter } from "./adapter.js";
+import { AuditLog } from "./audit/log.js";
 import { CliPathSchema, parseCliArguments, validateRunArtifactTargets, type CliArguments } from "./cli-options.js";
 import {
   createInteractiveArtifactPaths,
@@ -18,19 +16,20 @@ import {
 } from "./cli-ui.js";
 import { loadDataset } from "./dataset.js";
 import { loadExperimentConfig, planExperiment, runExperiment } from "./experiment.js";
+import { DEFAULT_GATE_CANDIDATE, runGate } from "./gate-command.js";
 import {
   GuidedRunCancelledError,
   GuidedRunDeclinedError,
   resolveGuidedRun,
   type GuidedPromptPort,
 } from "./guided-run.js";
+import { runMockExperiment } from "./mock/run.js";
+import { runSuspensionDemo } from "./monitor/demo.js";
 import { loadPricingConfig } from "./pricing.js";
-import { writeReport, type RunManifest } from "./report.js";
+import { createProviderFromEnvironment } from "./providers/factory.js";
+import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
-import type { RawRun } from "./scoring.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
-
-const ApiKeySchema = z.string().min(1, "ANTHROPIC_API_KEY is required for live execution");
 
 export async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseCliArguments(argv);
@@ -50,6 +49,39 @@ export async function main(argv: readonly string[]): Promise<void> {
     await runLiveExperiment(parsed);
     return;
   }
+  if (parsed.command === "gate") {
+    const { report: gateReport } = await runGate({
+      rawPath: parsed.rawPath ?? "runs/results.jsonl",
+      configPath: parsed.configPath ?? "config/full.v2.json",
+      thresholdsPath: parsed.thresholdsPath ?? "config/thresholds.v1.json",
+      candidate: parsed.candidate ?? DEFAULT_GATE_CANDIDATE,
+      outputDirectory: parsed.outputPath ?? "reports/generated/gate",
+      ...(parsed.reference === undefined ? {} : { reference: parsed.reference }),
+      ...(parsed.baselinePath === undefined ? {} : { baselinePath: parsed.baselinePath }),
+      ...(parsed.auditLogPath === undefined ? {} : { auditLogPath: parsed.auditLogPath }),
+    });
+    process.stdout.write(`Gate ${gateReport.decision}${gateReport.dataSource === "mock" ? " (mock data)" : ""}: ${gateReport.candidate.configuration} vs ${gateReport.reference.configuration}\n`);
+    for (const line of [...gateReport.reasons, ...(gateReport.recommendation ? [gateReport.recommendation] : []), ...gateReport.warnings.map((warning) => `Warning: ${warning}`)]) process.stdout.write(`${line}\n`);
+    process.exitCode = gateReport.exitCode;
+    return;
+  }
+  if (parsed.command === "audit-verify") {
+    const verification = await new AuditLog(parsed.logPath).verify(parsed.expectedHeadHash);
+    process.stdout.write(`Audit log ${verification.valid ? "verified" : "FAILED verification"}: ${verification.entries} entries, head ${verification.headHash}\n`);
+    for (const issue of verification.issues) process.stdout.write(`${issue.line === 0 ? "log" : `line ${issue.line}`}: ${issue.problem}\n`);
+    process.exitCode = verification.valid ? 0 : 1;
+    return;
+  }
+  if (parsed.command === "suspension-demo") {
+    for (const line of await runSuspensionDemo(parsed.logPath ?? "runs/demo/audit.jsonl")) process.stdout.write(`${line}\n`);
+    return;
+  }
+  if (parsed.command === "mock-run") {
+    const outputPath = parsed.outputPath ?? "runs/mock/results.jsonl";
+    const runs = await runMockExperiment({ configPath: parsed.configPath ?? "config/full.v2.json", outputPath, profile: parsed.profile });
+    process.stdout.write(`Wrote ${runs.length} mock runs (${parsed.profile} profile) to ${outputPath}\n`);
+    return;
+  }
   await report(parsed);
 }
 
@@ -61,9 +93,17 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
   await validateRunArtifactTargets(outputPath, eventsPath);
   const config = guided?.config ?? await loadExperimentConfig(configPath);
   const pricing = await loadPricingConfig(config.pricing);
-  const apiKeyResult = ApiKeySchema.safeParse(process.env.ANTHROPIC_API_KEY);
-  if (!apiKeyResult.success) throw new Error("ANTHROPIC_API_KEY is required for live execution");
-  const apiKey = apiKeyResult.data;
+  const configured = createProviderFromEnvironment(process.env, pricing.perMillionTokens, {
+    createAnthropicClient: (apiKey) => {
+      const anthropic = new Anthropic({ apiKey });
+      return { messages: { create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions) } };
+    },
+    fetch: async (url, init) => {
+      const response = await fetch(url, init);
+      const stream = response.body;
+      return { ok: response.ok, status: response.status, text: () => response.text(), body: stream ? { getReader: () => stream.getReader() } : null };
+    },
+  });
   if (options.interactive) {
     await reserveInteractiveArtifactPaths({ resultsPath: outputPath, eventsPath });
   }
@@ -71,7 +111,6 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
     new JsonlTelemetrySink(eventsPath),
     await createLangfuseTelemetry(),
   ]);
-  const anthropic = new Anthropic({ apiKey });
   const resolvedMode = resolveProgressMode({
     requested: options.progress,
     isTTY: Boolean(process.stderr.isTTY),
@@ -89,11 +128,8 @@ async function runLiveExperiment(options: Extract<CliArguments, { command: "run"
   try {
     await runExperiment({
       config,
-      adapter: new AnthropicAdapter({
-        messages: {
-          create: (request, requestOptions) => anthropic.messages.create(request as never, requestOptions),
-        },
-      }, pricing.perMillionTokens),
+      adapter: configured.adapter,
+      models: configured.models,
       outputPath,
       telemetry,
       signal: runSignal.signal,
@@ -172,32 +208,12 @@ function createGuidedPromptPort(): GuidedPromptPort {
 }
 
 async function report(options: Extract<CliArguments, { command: "report" }>): Promise<void> {
-  const rawPath = options.rawPath ?? "runs/results.jsonl";
-  const outputDirectory = options.outputPath ?? "reports/generated";
-  const configPath = options.configPath ?? "config/full.v2.json";
-  const config = await loadExperimentConfig(configPath);
-  const dataset = await loadDataset(`${config.dataset}/manifest.json`);
-  const rawText = await readFile(rawPath, "utf8");
-  const runs = rawText.split(/\r?\n/u).filter(Boolean).map((line) => JSON.parse(line) as RawRun);
-  const pricing = await loadPricingConfig(config.pricing);
-  const manifest: RunManifest = {
-    commitSha: process.env.GITHUB_SHA ?? "local",
-    datasetHash: dataset.hash,
-    configurationHash: createHash("sha256").update(JSON.stringify(config)).digest("hex"),
-    promptVersion: config.promptVersion,
-    resourceVersion: config.resourceVersion,
-    models: [...new Set(runs.flatMap(({ modelIds }) => modelIds ?? []))],
-    repeatCount: config.repeats,
-    seed: config.seed,
-    nodeVersion: process.version,
-    lockfileVersion: "pnpm-lock.yaml",
-    pricingVersion: pricing.version,
-    pricingEffectiveDate: pricing.effectiveDate,
-    startedAt: new Date().toISOString(),
-    completedAt: new Date().toISOString(),
-    rawResultReferences: [rawPath],
-  };
-  await writeReport(outputDirectory, runs, dataset.cases, manifest);
+  await generateReport({
+    rawPath: options.rawPath ?? "runs/results.jsonl",
+    outputDirectory: options.outputPath ?? "reports/generated",
+    configPath: options.configPath ?? "config/full.v2.json",
+    ...(options.eventsPath === undefined ? {} : { eventsPath: options.eventsPath }),
+  });
 }
 
 async function runEntrypoint(): Promise<void> {

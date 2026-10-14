@@ -45,6 +45,47 @@ describe("CLI argument parsing", () => {
       command: "report",
       rawPath: "runs/raw.jsonl",
     });
+    expect(parseCliArguments(["report", "--raw", "runs/raw.jsonl", "--events", "runs/events.jsonl", "--output", "out", "--config", "config/smoke.v2.json"])).toEqual({
+      command: "report",
+      rawPath: "runs/raw.jsonl",
+      eventsPath: "runs/events.jsonl",
+      outputPath: "out",
+      configPath: "config/smoke.v2.json",
+    });
+  });
+
+  it("parses the gate and mock-run commands", () => {
+    expect(parseCliArguments(["gate"])).toEqual({ command: "gate" });
+    expect(parseCliArguments(["gate", "--raw", "runs/a.jsonl", "--config", "config/full.v2.json", "--thresholds", "config/thresholds.v1.json", "--candidate", "routed", "--reference", "direct-sonnet", "--baseline", "runs/b.jsonl", "--output", "out"])).toEqual({
+      command: "gate",
+      rawPath: "runs/a.jsonl",
+      configPath: "config/full.v2.json",
+      thresholdsPath: "config/thresholds.v1.json",
+      candidate: "routed",
+      reference: "direct-sonnet",
+      baselinePath: "runs/b.jsonl",
+      outputPath: "out",
+    });
+    expect(() => parseCliArguments(["gate", "--candidate", "Routed; rm"])).toThrow(/lowercase/u);
+    expect(parseCliArguments(["mock-run"])).toEqual({ command: "mock-run", profile: "clean" });
+    expect(parseCliArguments(["mock-run", "--profile", "regressed", "--config", "config/smoke.v2.json", "--output", "runs/mock.jsonl"])).toEqual({
+      command: "mock-run",
+      profile: "regressed",
+      configPath: "config/smoke.v2.json",
+      outputPath: "runs/mock.jsonl",
+    });
+    expect(() => parseCliArguments(["mock-run", "--profile", "live"])).toThrow();
+  });
+
+  it("parses the audit and suspension demo commands", () => {
+    const head = "a".repeat(64);
+    expect(parseCliArguments(["audit-verify", "--log", "runs/audit.jsonl"])).toEqual({ command: "audit-verify", logPath: "runs/audit.jsonl" });
+    expect(parseCliArguments(["audit-verify", "--log", "runs/audit.jsonl", "--head", head])).toEqual({ command: "audit-verify", logPath: "runs/audit.jsonl", expectedHeadHash: head });
+    expect(() => parseCliArguments(["audit-verify"])).toThrow();
+    expect(() => parseCliArguments(["audit-verify", "--log", "x", "--head", "short"])).toThrow(/sha256/u);
+    expect(parseCliArguments(["suspension-demo"])).toEqual({ command: "suspension-demo" });
+    expect(parseCliArguments(["suspension-demo", "--log", "runs/demo.jsonl"])).toEqual({ command: "suspension-demo", logPath: "runs/demo.jsonl" });
+    expect(parseCliArguments(["gate", "--audit-log", "runs/audit.jsonl"])).toEqual({ command: "gate", auditLogPath: "runs/audit.jsonl" });
   });
 
   it("rejects unsupported progress values, options, and commands", () => {
