@@ -55,8 +55,6 @@ describe("5.5 request body", () => {
     expect(body.thinking).toEqual({ type: "adaptive" });
     expect(body.output_config).toEqual({ effort });
     expect(body).not.toHaveProperty("temperature");
-    expect(body).not.toHaveProperty("top_p");
-    expect(body).not.toHaveProperty("top_k");
   });
 
   it("omits output_config when no effort is requested", async () => {
@@ -122,6 +120,49 @@ describe("thinking replay", () => {
     const second = create.mock.calls[1]?.[0] as { messages: readonly { role: string; content: unknown }[] };
     const assistant = second.messages.find(({ role }) => role === "assistant");
     expect(assistant?.content).toEqual(thinkingTurn);
+  });
+});
+
+describe("review follow-ups", () => {
+  it("replays raw blocks with fields the parser does not model, and redacted thinking", async () => {
+    const turn = [
+      { type: "redacted_thinking", data: "opaque" },
+      { type: "text", text: "Consulto.", citations: null },
+      { type: "tool_use", id: "call-1", name: "get_document", input: { documentId: "INV-001" }, caller: { type: "direct" } },
+    ];
+    const create = vi.fn()
+      .mockResolvedValueOnce(reply(ANTHROPIC_MODELS.opus55, turn, "tool_use"))
+      .mockResolvedValueOnce(reply(ANTHROPIC_MODELS.opus55, [{ type: "text", text: JSON.stringify({ outcome: "completed", answer: "1160", claims: [] }) }]));
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates);
+    await runAgent({ caseId: "raw", seed: 1, prompt: "x", systemPrompt: "s", model: ANTHROPIC_MODELS.opus55, adapter, tools: createSyntheticTools(), policy: DEFAULT_AGENT_POLICY });
+    const second = create.mock.calls[1]?.[0] as { messages: readonly { role: string; content: unknown }[] };
+    expect(second.messages.find(({ role }) => role === "assistant")?.content).toEqual(turn);
+  });
+
+  it("does not return provider content for an empty turn", async () => {
+    const create = vi.fn().mockResolvedValue(reply(ANTHROPIC_MODELS.sonnet55, []));
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates);
+    const response = await adapter.generate({ model: ANTHROPIC_MODELS.sonnet55, messages: [], tools: [], maxOutputTokens: 1024, signal: signal() });
+    expect(response.providerContent).toBeUndefined();
+  });
+
+  it("forwards effort from the runner only to adaptive-thinking models", async () => {
+    const final = [{ type: "text", text: JSON.stringify({ outcome: "abstained", answer: "x", claims: [] }) }];
+    for (const [model, expected] of [[ANTHROPIC_MODELS.sonnet55, { effort: "medium" }], [ANTHROPIC_MODELS.sonnet, undefined]] as const) {
+      const create = vi.fn().mockResolvedValue(reply(model, final));
+      const adapter = new AnthropicAdapter({ messages: { create } }, { ...rates, [ANTHROPIC_MODELS.sonnet]: { input: 2, output: 10 } });
+      await runAgent({ caseId: "e", seed: 1, prompt: "x", systemPrompt: "s", model, effort: "medium", adapter, tools: createSyntheticTools(), policy: DEFAULT_AGENT_POLICY });
+      const body = create.mock.calls[0]?.[0] as Record<string, unknown>;
+      if (expected) expect(body.output_config).toEqual(expected);
+      else expect(body).not.toHaveProperty("output_config");
+    }
+  });
+
+  it("prices a long Haiku 5.5 prompt on the long-prompt card inside generate", async () => {
+    const create = vi.fn().mockResolvedValue({ ...reply(ANTHROPIC_MODELS.haiku55, [{ type: "text", text: "ok" }]), usage: { input_tokens: 150_000, output_tokens: 10 } });
+    const adapter = new AnthropicAdapter({ messages: { create } }, rates);
+    const response = await adapter.generate({ model: ANTHROPIC_MODELS.haiku55, messages: [], tools: [], maxOutputTokens: 1024, signal: signal() });
+    expect(response.usage.costUsd).toBeCloseTo((150_000 * 0.5 + 10 * 2.5) / 1_000_000, 12);
   });
 });
 

@@ -20,7 +20,7 @@ export const ANTHROPIC_MODELS = {
 export const ANTHROPIC_MODEL_CAPABILITIES: Readonly<Record<string, ModelCapabilities>> = Object.freeze({
   [ANTHROPIC_MODELS.haiku]: { provider: "anthropic", acceptsTemperature: true, defaultTemperature: 0, maxOutputTokensPerCall: 4_096, toolCalling: true, structuredOutput: "prompt" },
   [ANTHROPIC_MODELS.sonnet]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 8_192, toolCalling: true, structuredOutput: "prompt" },
-  [ANTHROPIC_MODELS.haiku55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 4_096, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
+  [ANTHROPIC_MODELS.haiku55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 8_192, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
   [ANTHROPIC_MODELS.sonnet55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 16_384, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
   [ANTHROPIC_MODELS.opus55]: { provider: "anthropic", acceptsTemperature: false, maxOutputTokensPerCall: 16_384, toolCalling: true, structuredOutput: "prompt", thinking: "adaptive" },
 });
@@ -178,7 +178,9 @@ export class AnthropicAdapter implements ModelAdapter {
       },
       modelId: response.model,
       latencyMs: performance.now() - started,
-      ...(capabilities.thinking === "adaptive" ? { providerContent: response.content } : {}),
+      // Replay the provider's own blocks untouched (the parsed copy drops fields on text and tool_use blocks).
+      // An empty turn falls back to the codec's text form, which never sends empty assistant content.
+      ...(capabilities.thinking === "adaptive" && response.content.length > 0 ? { providerContent: (raw as { content: readonly unknown[] }).content } : {}),
       ...(response.stop_reason === NORMALIZED_STOP_REASONS.refusal ? { refusalCategory: response.stop_details?.category ?? null } : {}),
     };
   }
