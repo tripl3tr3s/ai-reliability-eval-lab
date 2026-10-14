@@ -1,0 +1,45 @@
+{
+  "$schema": "./thresholds.schema.json",
+  "version": "thresholds-v2",
+  "date": "2026-10-14",
+  "owner": "Tripl3tr3s",
+  "severityRulesVersion": "severity-rules-v2",
+  "confidence": 0.95,
+  "bootstrap": {
+    "resamples": 10000,
+    "seed": 20260825
+  },
+  "minimumCases": {
+    "value": 90,
+    "rationale": "Dataset v3 has 90 cases. A smoke run (5 cases) must never produce a PASS, and a partial run must not either: the gate decides on the full dataset only. Starting value, to be raised if the dataset grows."
+  },
+  "deterministicChecks": {
+    "requiredPassRate": 1,
+    "rationale": "Schema, completeness, uniqueness, and dataset integrity are not statistical. A single failure means the evidence is unusable, so the requirement is 100 percent."
+  },
+  "criticalErrors": {
+    "maxUpperBound": 0.035,
+    "rationale": "With 90 cases, zero critical cases gives a one-sided 95 percent Clopper-Pearson upper bound of 3.3 percent and one critical case gives 5.2 percent. A 3.5 percent limit is therefore zero tolerance at this sample size, the tightest limit 90 cases can demonstrate. Severity rules v2 add wrong_value, so a wrong amount or identifier in an answer now counts. Starting value pending the first live v3 run."
+  },
+  "zeroWidthInterval": {
+    "policy": "warn",
+    "rationale": "When the arms agree on every repeat of every case, the percentile bootstrap interval collapses to a point and clears any margin. That shows no observed regression, not proven non-inferiority: 90 identical cases still allow up to 3.3 percent of cases to differ. The gate passes with an explicit warning. Kept from thresholds-v1; revisit after the first live v3 run shows how often the arms disagree."
+  },
+  "nonInferiority": [
+    {
+      "metric": "completion",
+      "margin": 0.03,
+      "rationale": "Kept at the 3 point margin of thresholds-v1. At 90 cases and 80 percent power the minimum detectable paired difference is about 9 points at 10 percent discordance and 13 points at 20 percent (src/stats/power.ts), so a 3 point margin is confirmable only when the arms almost never disagree. Expect INCONCLUSIVE for small real differences; that is the correct output."
+    },
+    {
+      "metric": "headlineToolAccuracy",
+      "margin": 0.03,
+      "rationale": "Kept at 3 points. Declared extra reads no longer fail tool accuracy in v3, so the metric measures plan adherence rather than penalising reasonable verification calls."
+    },
+    {
+      "metric": "recovery",
+      "margin": 0.03,
+      "rationale": "Kept at 3 points. Recovery applies to 18 cases in v3 (8 in v2), so it is decidable more often, but expect INCONCLUSIVE whenever several recovery cases differ between arms."
+    }
+  ]
+}
