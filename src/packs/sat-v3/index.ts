@@ -8,7 +8,7 @@ import { createSatV3State, createSatV3Tools, type SatV3State } from "./tools.js"
  * Final-result contract for v3, in Spanish. The JSON keys and outcome values stay in English because the
  * runner validates them with the same schema as v1 and v2; the answer and claims are written in Spanish.
  */
-export const FINAL_RESULT_INSTRUCTION_V3 = 'Devuelve exactamente un objeto JSON con esta forma: {"outcome":"completed"|"abstained","answer":"string","claims":[{"claim":"string","evidenceIds":["string"]}]}. Sin bloques de Markdown ni texto alrededor. Escribe answer y cada claim en espanol. Cada afirmacion factual debe citar los evidenceId de los resultados de herramientas que la respaldan. Usa "abstained" cuando la evidencia de las herramientas no permita responder, y explica que falta. Usa un arreglo claims vacio si no hay afirmaciones factuales.';
+export const FINAL_RESULT_INSTRUCTION_V3 = 'Devuelve exactamente un objeto JSON con esta forma: {"outcome":"completed"|"abstained","answer":"string","claims":[{"claim":"string","evidenceIds":["string"]}]}. Sin bloques de Markdown ni texto alrededor. Escribe answer y cada claim en espanol. Cada afirmacion factual debe citar los evidenceId de los resultados de herramientas que la respaldan. Usa "completed" cuando respondes, incluso si la respuesta es que una operacion no procede y por que. Usa "abstained" solo cuando la evidencia de las herramientas no permita responder, y explica que falta. Usa un arreglo claims vacio si no hay afirmaciones factuales.';
 
 /** Like DISAI_Conta, the agent knows which client company is selected; "nosotros" and "nuestra empresa" refer to it. */
 const ROLE_V3 = `Eres un agente acotado de operaciones fiscales para un despacho contable en Mexico. La empresa del usuario es ${CLIENTE.nombre}, RFC ${CLIENTE.rfc}; "nosotros" y "nuestra empresa" se refieren a ella. La fecha de hoy es ${FIXTURE_TODAY}. Responde en espanol. Usa solo la evidencia que devuelven las herramientas; no inventes montos, RFC, UUID ni estados.`;
@@ -18,8 +18,17 @@ function hasDuplicate(finalState: Readonly<Record<string, unknown>>): boolean {
   const pagos = (finalState.pagosRegistrados ?? []) as readonly { invoiceUuid: string; amount: number; date: string; method: string }[];
   const confirmaciones = (finalState.confirmacionesPendientes ?? []) as readonly { herramienta: string; argumentos: unknown }[];
   const pagoKeys = pagos.map(({ invoiceUuid, amount, date, method }) => `${invoiceUuid}|${amount}|${date}|${method}`);
-  const confirmacionKeys = confirmaciones.map(({ herramienta, argumentos }) => `${herramienta}|${JSON.stringify(argumentos)}`);
+  const confirmacionKeys = confirmaciones.map(({ herramienta, argumentos }) => `${herramienta}|${canonicalJson(argumentos)}`);
   return new Set(pagoKeys).size !== pagoKeys.length || new Set(confirmacionKeys).size !== confirmacionKeys.length;
+}
+
+/** JSON with object keys sorted, so equal arguments compare equal regardless of key order. */
+function canonicalJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value !== null && typeof value === "object") {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson((value as Record<string, unknown>)[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
 }
 
 function evidenceFacts(tool: string, input: unknown, result: ToolResultView): readonly string[] {

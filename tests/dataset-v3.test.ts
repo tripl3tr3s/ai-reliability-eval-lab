@@ -94,3 +94,28 @@ describe("abstention cases rest on tool-established negative evidence", () => {
     expect(data === null || (Array.isArray(data) && data.length === 0)).toBe(true);
   });
 });
+
+/** Correct answers that an earlier matcher version rejected (code review of 2026-10-14). They must pass. */
+const ACCEPTED_PARAPHRASES: Readonly<Record<string, readonly string[]>> = {
+  "v3-recuperacion-timeout-saldo-46": ["De la factura por $116,000.00 pesos se han pagado $50,000.00, por lo que el saldo es de $66,000.00 pesos."],
+  "v3-recuperacion-desactualizado-saldo-49": ["La factura de $290,000 pesos lleva $190,000 pagados en dos parcialidades; el saldo es $100,000."],
+  "v3-multi-rep-faltante-23": ["Ha pagado $190,000 en dos pagos; todavía debe $100,000 y el pago de $90,000 está sin complemento de pago."],
+  "v3-confirmacion-rep-segunda-parcialidad-79": ["De la factura de $290,000 MXN preparé el complemento por $90,000.00, que quedó pendiente de confirmación."],
+  "v3-recuperacion-transitorio-factura-45": ["La primera consulta no se pudo hacer por un error transitorio; al reintentar, la factura está vigente por $11,600.00."],
+  "v3-recuperacion-pago-respuesta-perdida-51": ["El pago de $30,000.00 quedó registrado como parcialidad 2 y el saldo insoluto es $36,000.00. No se registró dos veces."],
+  "v3-confirmacion-nota-factura-cancelada-88": ["No puedo crear la nota porque el CFDI 5b1e0c3a-7d2f-4a9b-8c6e-000000000024 está cancelado."],
+  "v3-confirmacion-rep-factura-pue-87": ["Esa factura no requiere complemento de pago porque es PUE."],
+  "v3-confirmacion-cancelar-recibida-90": ["No puedo cancelarla porque solo el emisor puede cancelar un CFDI."],
+  "v3-confirmacion-cancelar-sin-folio-82": ["No puedo cancelar sin el folio fiscal del CFDI que la sustituye."],
+  "v3-confirmacion-nota-excede-saldo-78": ["No puedo crear la nota porque excede el saldo acreditable de $8,120.00."],
+  "v3-consulta-saldo-sin-pagos-20": ["No hay pagos registrados; el saldo es $34,800."],
+  "v3-consulta-factura-liquidada-04": ["Sí, la factura está pagada por completo."],
+};
+
+describe("paraphrases found in code review are accepted", () => {
+  it.each(Object.entries(ACCEPTED_PARAPHRASES).flatMap(([caseId, answers]) => answers.map((answer) => [caseId, answer] as const)))("%s: %s", (caseId, answer) => {
+    const datasetCase = cases.find(({ id }) => id === caseId);
+    expect(datasetCase, caseId).toBeDefined();
+    expect(v3AnswerFailure(answer, datasetCase!)).toBeNull();
+  });
+});

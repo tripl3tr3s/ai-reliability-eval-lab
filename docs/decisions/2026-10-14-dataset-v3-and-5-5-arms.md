@@ -75,3 +75,10 @@ Matcher changes:
 - The gate is relative: two arms that both fail every case pass non-inferiority. The scripted mock showed this before the allowlist fix (both arms 0 percent, gate PASS). An absolute floor on completion and recovery would need a reviewed thresholds-v3 change.
 - The scorer has been validated only against authored answers (reference and counterexamples). TPR and TNR against labeled live answers are still needed after the first live run.
 - Tools are synthetic stand-ins for sat-mcp, not the server itself; behaviour of the real tools (latency, error texts, schema details) can differ.
+- Decline cases (asking for a missing folio, refusing to cancel a received CFDI) require at least one tool call in their accepted plans, so an answer that correctly calls nothing fails tool accuracy (completion still passes).
+- The runner's repair message for an invalid final result is the English v1/v2 instruction, also on v3.
+- Gate and report artifacts for v1 and v2 change shape slightly: the gate reports the code's severity rules version (v2) and a `wrong_value: 0` count, and the report treats any run with at least two arms and five repeats as complete. Decisions on thresholds-v1 are unchanged.
+
+## Code review follow-up (2026-10-14)
+
+A review before the first live run found that the Spanish matcher let negation leak across causal conjunctions ("No puedo ... porque el CFDI esta cancelado"), that decimal commas split clauses, that some forbidden values were legitimate context figures (invoice total, amount already paid), and that negative forbidden claims ("no se pudo consultar") flagged honest recovery narratives. With a 3.5 percent critical limit one false critical error blocks the gate, so all were fixed: clause boundaries include porque, ya que, dado que, puesto que, pues, and sino; punctuation splits only before whitespace; negation must sit within six words of the phrase; amounts are negated only by verbal negation; the currency must follow the amount; forbidden values and claims were pruned to unambiguous wrong conclusions. The reviewer's correct-but-rejected answers are now regression tests.

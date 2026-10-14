@@ -13,13 +13,21 @@ export function normalizeEs(value: string): string {
 
 const TOKEN_CHAR = /[a-z0-9_-]/u;
 const NEGATION_CUE = /\b(?:no|sin|nunca|ningun|ninguna|ninguno|tampoco|ni|jamas)\b/u;
+/** Amounts are negated only by a verbal negation ("el saldo no es 90,000"); "sin IVA 100,000" is not a negation of the amount. */
+const AMOUNT_NEGATION_CUE = /\b(?:no|nunca|jamas|ni)\b/u;
+/** A negation cue counts only within this many words before the phrase, inside the same clause. */
+const NEGATION_WINDOW_WORDS = 6;
 const NEGATIVE_POLARITY_START = /^(?:no|sin|nunca|ningun|ninguna|ninguno|tampoco|ni|jamas|insuficiente|imposible)\b/u;
-/** Clause boundaries: punctuation and contrastive or additive conjunctions that start a new assertion. */
-const CLAUSE_BOUNDARY = /[.!?;,:()]|\b(?:y|e|pero|aunque|sin embargo|mientras|ademas|por lo que|asi que)\b/u;
+/**
+ * Clause boundaries: punctuation followed by a space or the end (so "9,000" and "17.25" do not split), and
+ * conjunctions that start a new assertion, including causal and corrective ones ("porque", "ya que", "sino").
+ */
+const CLAUSE_BOUNDARY = /[.!?;,:](?=\s|$)|[()]|\b(?:y|e|pero|aunque|sin embargo|mientras|ademas|por lo que|asi que|porque|ya que|dado que|puesto que|pues|sino)\b/u;
 
-function lastClause(prefix: string): string {
-  const parts = prefix.split(CLAUSE_BOUNDARY);
-  return parts.at(-1) ?? "";
+/** The words of the current clause that can scope a negation over what follows. */
+function negationScope(prefix: string): string {
+  const clause = prefix.split(CLAUSE_BOUNDARY).at(-1) ?? "";
+  return clause.trim().split(/\s+/u).slice(-NEGATION_WINDOW_WORDS).join(" ");
 }
 
 function* wholeTokenMatches(text: string, phrase: string): Generator<number> {
@@ -40,7 +48,7 @@ export function containsAffirmedEs(text: string, phrase: string): boolean {
   const phraseIsNegative = NEGATIVE_POLARITY_START.test(normalizedPhrase);
   for (const index of wholeTokenMatches(normalizedText, normalizedPhrase)) {
     if (phraseIsNegative) return true;
-    if (!NEGATION_CUE.test(lastClause(normalizedText.slice(0, index)))) return true;
+    if (!NEGATION_CUE.test(negationScope(normalizedText.slice(0, index)))) return true;
   }
   return false;
 }
@@ -64,7 +72,8 @@ export interface FoundAmount {
  */
 export function extractAmounts(text: string): readonly FoundAmount[] {
   const normalized = normalizeEs(text);
-  const pattern = /(?<![a-z0-9_\-/.,])\$?\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?: \d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(\s?mil\b)?(?![a-z0-9_\-/]|[.,]\d)/gu;
+  // A trailing currency code ("4,000USD") or a score denominator ("80/100") may follow the number directly.
+  const pattern = /(?<![a-z0-9_\-/.,])\$?\s?(\d{1,3}(?:,\d{3})+(?:\.\d{1,2})?|\d{1,3}(?:\.\d{3})+,\d{1,2}|\d{1,3}(?: \d{3})+(?:\.\d{1,2})?|\d+(?:\.\d{1,2})?)(\s?mil\b)?(?!(?!usd|mxn|pesos|dolares|\/100\b)[a-z0-9_\-/]|[.,]\d)/gu;
   const found: FoundAmount[] = [];
   for (const match of normalized.matchAll(pattern)) {
     const raw = match[1]!;
@@ -73,20 +82,28 @@ export function extractAmounts(text: string): readonly FoundAmount[] {
     const value = Number(numeric) * (match[2] ? 1_000 : 1);
     if (!Number.isFinite(value)) continue;
     const index = match.index ?? 0;
-    found.push({ value, index, negated: NEGATION_CUE.test(lastClause(normalized.slice(0, index))) });
+    found.push({ value, index, negated: AMOUNT_NEGATION_CUE.test(negationScope(normalized.slice(0, index))) });
   }
   return found;
 }
 
 const CURRENCY_WORDS: Readonly<Record<"MXN" | "USD", RegExp>> = {
-  MXN: /\b(?:mxn|pesos?|m\.n\.)\b/u,
-  USD: /\b(?:usd|dolares?|us\$)\b/u,
+  MXN: /^[\d,. ]*(?:mil\s*)?(?:mxn|pesos?|m\.n\.)/u,
+  USD: /^[\d,. ]*(?:mil\s*)?(?:usd|dolares?|us\$)/u,
 };
 
-/** True when the amount appears affirmed, and, if a currency is given, the currency is named in the answer. */
+/** Characters after an amount within which its currency must be named. */
+const CURRENCY_WINDOW = 24;
+
+/** True when the amount appears affirmed and, if a currency is given, that currency is named right after it. */
 export function containsAmount(text: string, value: number, currency?: "MXN" | "USD"): boolean {
-  const hit = extractAmounts(text).some((amount) => !amount.negated && Math.abs(amount.value - value) < 0.005);
-  return hit && (currency === undefined || CURRENCY_WORDS[currency].test(normalizeEs(text)));
+  const normalized = normalizeEs(text);
+  return extractAmounts(text).some((amount) => {
+    if (amount.negated || Math.abs(amount.value - value) >= 0.005) return false;
+    if (currency === undefined) return true;
+    const after = normalized.slice(amount.index, amount.index + CURRENCY_WINDOW).replace(/^\$?\s?/u, "");
+    return CURRENCY_WORDS[currency].test(after);
+  });
 }
 
 /** Identifier shapes the v3 pack uses, for claim-to-evidence checks. */
@@ -95,7 +112,10 @@ export const V3_IDENTIFIER_PATTERN = /\b(?:[a-z&]{3,4}\d{6}[a-z0-9]{3}|[0-9a-f]{
 const STOPWORDS_ES = new Set([
   "para", "como", "esta", "este", "esto", "estos", "estas", "que", "con", "por", "una", "uno", "unos", "las", "los", "del", "sus", "son",
   "fue", "ser", "hay", "tiene", "cfdi", "factura", "resultado", "herramienta", "consulta", "segun", "registro", "datos", "dato",
+  "estado", "proveedor", "cliente", "monto", "pago", "pagos", "total", "fecha", "tipo",
 ]);
+
+const DATE_OR_PERCENT_AFTER = /^\d+(?:\.\d+)?\s*(?:%|de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|octubre|noviembre|diciembre))/u;
 
 /**
  * A v3 claim is supported by its linked facts when every identifier and every amount it states appears in them,
@@ -105,7 +125,8 @@ export function claimSupportedEs(claim: string, facts: string): boolean {
   const normalizedClaim = normalizeEs(claim);
   const normalizedFacts = normalizeEs(facts);
   const identifiers = [...normalizedClaim.matchAll(V3_IDENTIFIER_PATTERN)].map(([value]) => value);
-  const amounts = extractAmounts(claim).map(({ value }) => value);
+  // Day numbers in written dates ("20 de marzo") and percentages are not amounts to look up in the facts.
+  const amounts = extractAmounts(claim).filter(({ index }) => !DATE_OR_PERCENT_AFTER.test(normalizedClaim.slice(index).replace(/^\$?\s?/u, ""))).map(({ value }) => value);
   const factAmounts = new Set(extractAmountsLoose(facts));
   if (!identifiers.every((identifier) => containsIdentifier(normalizedFacts, identifier))) return false;
   if (!amounts.every((value) => [...factAmounts].some((fact) => Math.abs(fact - value) < 0.005))) return false;

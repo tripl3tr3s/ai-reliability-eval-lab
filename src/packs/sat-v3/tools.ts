@@ -4,7 +4,7 @@ import { ToolEnvelopeSchema, type ToolContext, type ToolDefinition, type ToolEnv
 import type { FaultKind } from "../../faults.js";
 import type { PackFaultResolver } from "../types.js";
 import {
-  aristasFacturacion, catalogos, cfdiPorUuid, cfdis, contribuyentePorRfc, evidenciaRequerida, evidenciasPrevias,
+  CLIENTE, aristasFacturacion, catalogos, cfdiPorUuid, cfdis, contribuyentePorRfc, evidenciaRequerida, evidenciasPrevias,
   FIXTURE_TIMESTAMP_V3, FIXTURE_TODAY, pagosPrevios, type Cfdi, type OperationType, type TipoEvidencia,
 } from "./fixtures.js";
 
@@ -250,6 +250,7 @@ export function createSatV3Tools(resolveFault: PackFaultResolver = () => null): 
     }), "simulated-write", resolveFault, (input, context) => {
       const item = cfdiVigenteTipoI(input.invoiceUuid);
       if (item.metodoPago !== "PPD") throw new Rejection("POLICY", "Solo se registran pagos de facturas con metodo de pago PPD");
+      if ((input.payment.currency ?? "MXN").toUpperCase() !== item.moneda && input.payment.exchangeRate === undefined) throw new Rejection("POLICY", `El pago en ${input.payment.currency ?? "MXN"} requiere exchangeRate para una factura en ${item.moneda}`);
       const { saldo } = saldoDe(item, context.state);
       if (input.payment.amount - saldo > 0.005) throw new Rejection("POLICY", `El monto ${input.payment.amount} excede el saldo insoluto ${saldo}`);
       const parcialidad = pagosDe(item.uuid, context.state).length + 1;
@@ -329,7 +330,7 @@ export function createSatV3Tools(resolveFault: PackFaultResolver = () => null): 
       if (!item) throw new Rejection("NOT_FOUND", `No existe el CFDI ${input.cfdiUuid}`);
       const key = `${item.uuid}:${input.sha256}`;
       const existente = [...context.state.evidencias.values()].find((evidencia) => `${evidencia.cfdiUuid}:${evidencia.sha256}` === key)
-        ?? evidenciasPrevias.filter((evidencia) => `${evidencia.cfdiUuid}:${evidencia.sha256}` === key).map((evidencia, index) => ({ evidenciaId: `EV-H${index + 1}`, ...evidencia }))[0];
+        ?? evidenciasPrevias.flatMap((evidencia, index) => (`${evidencia.cfdiUuid}:${evidencia.sha256}` === key ? [{ evidenciaId: `EV-H${index + 1}`, ...evidencia }] : []))[0];
       if (existente) return { data: { ...existente, creada: false, mensaje: "La evidencia ya estaba registrada" }, idempotency: { key, committed: true, replayed: true } };
       const evidencia: EvidenciaRegistrada = { evidenciaId: `EV-${context.state.evidencias.size + 1}`, cfdiUuid: item.uuid, tipo: input.tipo, sha256: input.sha256, descripcion: input.descripcion };
       context.state.evidencias.set(evidencia.evidenciaId, evidencia);
@@ -385,7 +386,10 @@ export function createSatV3Tools(resolveFault: PackFaultResolver = () => null): 
     }),
     define("crear-nota-credito", "Crea una nota de credito (CFDI tipo E) relacionada a una factura. Requiere confirmacion humana: deja la operacion pendiente y no timbra.", z.object({ originalInvoiceUuid: UUID, amount: z.number().positive(), relationshipType: z.enum(["01", "03"]), reason: z.string().optional() }), "simulated-write", resolveFault, (input, context) => {
       const item = cfdiVigenteTipoI(input.originalInvoiceUuid);
-      const acreditado = notasDe(item.uuid).filter((nota) => nota.estado === "Vigente").reduce((sum, nota) => sum + nota.total, 0);
+      const pendientes = [...context.state.confirmaciones.values()]
+        .filter(({ herramienta, argumentos }) => herramienta === "crear-nota-credito" && (argumentos as { originalInvoiceUuid?: string }).originalInvoiceUuid?.toLowerCase() === item.uuid)
+        .reduce((sum, { argumentos }) => sum + ((argumentos as { amount?: number }).amount ?? 0), 0);
+      const acreditado = notasDe(item.uuid).filter((nota) => nota.estado === "Vigente").reduce((sum, nota) => sum + nota.total, 0) + pendientes;
       const disponible = round2(item.total - acreditado);
       if (input.amount - disponible > 0.005) throw new Rejection("POLICY", `El monto ${input.amount} excede el saldo acreditable ${disponible}`);
       return pendiente("crear-nota-credito", context, input, `Nota de credito por ${input.amount} ${item.moneda} relacionada al CFDI ${item.uuid} (tipo de relacion ${input.relationshipType})`);
@@ -398,6 +402,7 @@ export function createSatV3Tools(resolveFault: PackFaultResolver = () => null): 
     }), "simulated-write", resolveFault, (input, context) => {
       for (const documento of input.documentosRelacionados) {
         const item = cfdiVigenteTipoI(documento.idDocumento);
+        if (item.rfcEmisor !== input.emisor.rfc || item.rfcReceptor !== input.receptor.rfc) throw new Rejection("POLICY", `Emisor y receptor deben coincidir con el CFDI ${item.uuid}`);
         if (item.metodoPago !== "PPD") throw new Rejection("POLICY", `El CFDI ${item.uuid} no es PPD; no requiere complemento de pago`);
         if (Math.abs(round2(documento.impSaldoAnt - documento.impPagado) - documento.impSaldoInsoluto) > 0.005) throw new Rejection("POLICY", "ImpSaldoInsoluto debe ser ImpSaldoAnt menos ImpPagado");
       }
@@ -408,6 +413,7 @@ export function createSatV3Tools(resolveFault: PackFaultResolver = () => null): 
       if (!item || item.rfcEmisor !== input.rfcEmisor || item.rfcReceptor !== input.rfcReceptor || Math.abs(item.total - input.total) > 0.005) throw new Rejection("NOT_FOUND", "Los datos no coinciden con un CFDI emitido");
       if (item.estado === "Cancelado") throw new Rejection("POLICY", `El CFDI ${item.uuid} ya esta cancelado`);
       if (input.motivoCancelacion === "01" && !input.folioSustitucion) throw new Rejection("POLICY", "El motivo 01 requiere folioSustitucion");
+      if (item.rfcEmisor !== CLIENTE.rfc) throw new Rejection("POLICY", "Solo el emisor puede cancelar un CFDI; este CFDI fue emitido por otro contribuyente");
       return pendiente("cancelar-factura", context, input, `Cancelacion del CFDI ${item.uuid} con motivo ${input.motivoCancelacion}`);
     }),
   ];

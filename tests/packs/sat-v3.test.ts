@@ -244,3 +244,46 @@ describe("evidence facts", () => {
     expect(satV3Pack.evidenceFacts("registrar-evidencia-materialidad", {}, { ok: true, data: { evidenciaId: "EV-1" }, idempotency: { committed: true, replayed: false } })).toEqual(expect.arrayContaining(["escritura confirmada nueva", "result.evidenciaId EV-1"]));
   });
 });
+
+describe("review follow-ups", () => {
+  it("counts pending credit notes against the creditable balance", async () => {
+    const { call } = harness();
+    expect((await call("crear-nota-credito", { originalInvoiceUuid: cfdiUuid(19), amount: 17_000, relationshipType: "01" })).ok).toBe(true);
+    expect(await call("crear-nota-credito", { originalInvoiceUuid: cfdiUuid(19), amount: 17_000, relationshipType: "01" })).toMatchObject({ ok: false, error: { code: "POLICY" } });
+  });
+
+  it("refuses to cancel a CFDI the client did not issue", async () => {
+    const { call, final } = harness();
+    const f4 = cfdiN(4);
+    expect(await call("cancelar-factura", { uuid: f4.uuid, rfcEmisor: f4.rfcEmisor, rfcReceptor: f4.rfcReceptor, total: f4.total, motivoCancelacion: "02" })).toMatchObject({ ok: false, error: { code: "POLICY" } });
+    expect(final().confirmacionesPendientes).toHaveLength(0);
+  });
+
+  it("requires the complement's issuer and receiver to match the invoice", async () => {
+    const { call } = harness();
+    const result = await call("crear-complemento-pago", { emisor: { rfc: CLIENTE.rfc }, receptor: { rfc: "MRD140909WX2" }, pago: { fechaPago: "2026-04-10", formaPagoP: "03", monedaP: "MXN", monto: 90_000 }, documentosRelacionados: [{ idDocumento: cfdiUuid(18), numParcialidad: 2, impSaldoAnt: 190_000, impPagado: 90_000, impSaldoInsoluto: 100_000 }] });
+    expect(result).toMatchObject({ ok: false, error: { code: "POLICY" } });
+  });
+
+  it("rejects a payment in another currency without an exchange rate", async () => {
+    const { call } = harness();
+    expect(await call("rastrear-pago", { invoiceUuid: cfdiUuid(21), payment: { amount: 1_000, date: "2026-04-01", method: "03", currency: "MXN" } })).toMatchObject({ ok: false, error: { code: "POLICY" } });
+    expect((await call("rastrear-pago", { invoiceUuid: cfdiUuid(21), payment: { amount: 1_000, date: "2026-04-01", method: "03", currency: "USD" } })).ok).toBe(true);
+  });
+
+  it("looks RFCs up case-insensitively in 69-B checks", async () => {
+    const { call } = harness();
+    const result = data(await call("validar-rfc-lista-negra", { rfc: "tco190722hb8" }));
+    expect((result.resultados as { situacion: string }[])[0]!.situacion).toBe("Presunto");
+  });
+
+  it("treats key order as irrelevant when detecting a duplicate pending confirmation", () => {
+    expect(satV3Pack.hasDuplicateMutation({ confirmacionesPendientes: [{ herramienta: "x", argumentos: { a: 1, b: 2 } }, { herramienta: "x", argumentos: { b: 2, a: 1 } }] })).toBe(true);
+  });
+
+  it("states the cancellation rule and the completed-versus-abstained rule in the prompt", () => {
+    const prompt = satV3Pack.systemPrompt({ resources: "injected", promptVersion: "agent-prompt-v3", resourceVersion: "operational-resources-v3" });
+    expect(prompt).toContain("Solo el emisor puede cancelar");
+    expect(prompt).toContain("una operacion no procede");
+  });
+});

@@ -52,7 +52,7 @@ export const contribuyentes: readonly Contribuyente[] = [
   contribuyente("RST200101AB6", "RESTAURANTES TRES ESTRELLAS"),
 ];
 
-export const contribuyentePorRfc = (rfc: string): Contribuyente | undefined => contribuyentes.find((item) => item.rfc === rfc);
+export const contribuyentePorRfc = (rfc: string): Contribuyente | undefined => contribuyentes.find((item) => item.rfc === rfc.trim().toUpperCase());
 
 export type OperationType = "services" | "goods" | "honorarios" | "rental" | "transport";
 
@@ -222,4 +222,5 @@ export const politicasOperativasV3 = [
   "Antes de registrar un pago con rastrear-pago consulta el saldo con consultar-estado-de-pago. No registres el mismo pago dos veces.",
   "Los proveedores en situacion Presunto o Definitivo del Art. 69-B requieren revision antes de deducir sus CFDI. Desvirtuado y Sentencia favorable no son un riesgo vigente.",
   "Para cancelar con motivo 01 se requiere el folio fiscal (UUID) que sustituye al CFDI.",
+  "Solo el emisor puede cancelar un CFDI. Las facturas que recibe la empresa no se cancelan desde aqui: se le pide al emisor que solicite la cancelacion.",
 ] as const;
