@@ -32,8 +32,9 @@ const regressed = (failing: number, repeatsFailing = 5) => syntheticGrid(dataset
 const lookup = dataset.cases[0]!;
 
 describe("thresholds file", () => {
-  it("parses the committed thresholds and pins the implemented severity rules", () => {
-    expect(thresholds).toMatchObject({ version: "thresholds-v1", date: "2026-10-10", severityRulesVersion: SEVERITY_RULES_VERSION });
+  it("parses the committed thresholds, which pin severity rules v1, still valid for datasets v1 and v2", () => {
+    expect(thresholds).toMatchObject({ version: "thresholds-v1", date: "2026-10-10", severityRulesVersion: "severity-rules-v1" });
+    expect(SEVERITY_RULES_VERSION).toBe("severity-rules-v2");
     expect(thresholds.deterministicChecks.requiredPassRate).toBe(1);
     for (const item of [thresholds.minimumCases, thresholds.deterministicChecks, thresholds.criticalErrors, ...thresholds.nonInferiority]) {
       expect(item.rationale.length).toBeGreaterThan(20);
@@ -187,6 +188,7 @@ describe("gate decision", () => {
     expect(failing(clean, { candidate: { source: "raw.jsonl", configuration: CANDIDATE, runs: clean, invalidRows: 2 } })).toEqual(["raw_rows_valid"]);
     expect(failing(clean, { datasetIntegrityVerified: false })).toEqual(["dataset_integrity"]);
     expect(failing(clean, { thresholds: { ...thresholds, severityRulesVersion: "severity-rules-v0" } })).toEqual(["severity_rules_version"]);
+    expect(gate(clean, { thresholds: { ...thresholds, severityRulesVersion: "severity-rules-v2" } }).checks.find(({ id }) => id === "severity_rules_version")?.passed).toBe(true);
     expect(failing(clean, { candidate: { source: "raw.jsonl", configuration: "missing-arm", runs: clean, invalidRows: 0 } })).toEqual(expect.arrayContaining(["candidate_rows_present", "arms_cover_same_cases"]));
   });
 

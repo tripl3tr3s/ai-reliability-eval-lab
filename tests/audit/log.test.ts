@@ -167,7 +167,7 @@ describe("audit trail of gate decisions", () => {
     expect(entries[0]).toMatchObject({
       sequence: 0, timestamp: "2026-10-10T12:00:00.000Z", eventType: "gate_decision", ruleVersion: "thresholds-v1",
       dataHashes: { raw: pass.report.inputs.raw.sha256, dataset: pass.report.inputs.dataset.sha256, thresholds: pass.report.inputs.thresholds.sha256, config: pass.report.inputs.config.sha256 },
-      details: { decision: "PASS", candidate: "routed", reference: "direct-sonnet", severityRulesVersion: "severity-rules-v1", dataSource: "mock" },
+      details: { decision: "PASS", candidate: "routed", reference: "direct-sonnet", severityRulesVersion: "severity-rules-v2", dataSource: "mock" },
     });
     expect(entries[1]).toMatchObject({ sequence: 1, details: { decision: "BLOCK", exitCode: 1 } });
     expect((entries[1]!.details as { reasons: string[] }).reasons).toEqual(block.report.reasons);

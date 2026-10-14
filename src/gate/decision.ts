@@ -2,7 +2,7 @@ import type { DatasetCase } from "../dataset.js";
 import { caseTallies, type StatisticsMetric } from "../report-statistics.js";
 import { scoreRun, type RawRun, type RunScore } from "../scoring.js";
 import { clopperPearsonInterval, pairedBootstrap, zeroFailureSampleSize, type Interval } from "../stats/index.js";
-import { classifyCriticalErrors, CRITICAL_ERROR_TYPES, SEVERITY_RULES_VERSION, type CriticalErrorType } from "./severity.js";
+import { classifyCriticalErrors, CRITICAL_ERROR_TYPES, LEGACY_COMPATIBLE_RULES, SEVERITY_RULES_VERSION, type CriticalErrorType } from "./severity.js";
 import type { Thresholds } from "./thresholds.js";
 
 export type GateDecision = "PASS" | "BLOCK" | "INCONCLUSIVE";
@@ -132,6 +132,23 @@ function compareMetric(
  *    critical error was observed but the sample is too small to demonstrate the limit.
  * 4. PASS otherwise.
  */
+/**
+ * Thresholds must pin the rules the code implements, or an older rule version that classifies the
+ * dataset's cases identically (thresholds-v1 on dataset v1 or v2).
+ */
+function severityRulesCheck(pinned: string, cases: readonly DatasetCase[]): GateCheck {
+  const versions = new Set(cases.map(({ id }) => id.split("-", 1)[0]!));
+  const compatible = LEGACY_COMPATIBLE_RULES[pinned];
+  const legacyOk = compatible !== undefined && versions.size > 0 && [...versions].every((version) => compatible.has(version));
+  const passed = pinned === SEVERITY_RULES_VERSION || legacyOk;
+  const detail = pinned === SEVERITY_RULES_VERSION
+    ? `thresholds expect ${pinned}, code implements ${SEVERITY_RULES_VERSION}`
+    : legacyOk
+      ? `thresholds expect ${pinned}; code implements ${SEVERITY_RULES_VERSION}, which classifies dataset ${[...versions].sort().join(", ")} identically`
+      : `thresholds expect ${pinned}, code implements ${SEVERITY_RULES_VERSION}`;
+  return { id: "severity_rules_version", passed, detail };
+}
+
 export function evaluateGate(input: GateInput): GateResult {
   const { thresholds, candidate, reference } = input;
   const byId = new Map(input.cases.map((item) => [item.id, item]));
@@ -149,7 +166,7 @@ export function evaluateGate(input: GateInput): GateResult {
 
   const checks: GateCheck[] = [
     { id: "dataset_integrity", passed: input.datasetIntegrityVerified, detail: input.datasetIntegrityVerified ? "dataset hash matches its manifest" : "dataset hash was not verified" },
-    { id: "severity_rules_version", passed: thresholds.severityRulesVersion === SEVERITY_RULES_VERSION, detail: `thresholds expect ${thresholds.severityRulesVersion}, code implements ${SEVERITY_RULES_VERSION}` },
+    severityRulesCheck(thresholds.severityRulesVersion, input.cases),
     { id: "raw_rows_valid", passed: invalidRows === 0, detail: invalidRows === 0 ? "every row matches the raw run schema" : `${invalidRows} rows failed schema validation` },
     ...gridCheck("candidate", candidateRuns, knownCases, input.expectedRepeats),
     ...gridCheck("reference", referenceRuns, knownCases, input.expectedRepeats),

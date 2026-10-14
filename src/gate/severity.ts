@@ -1,10 +1,18 @@
-import type { DatasetCase } from "../dataset.js";
-import { containsUnnegated, equal, getPath, type RawRun } from "../scoring.js";
+import { isV3Case, type DatasetCase } from "../dataset.js";
+import { containsUnnegated, equal, getPath, termPresentV3, type RawRun } from "../scoring.js";
+import { containsAffirmedEs } from "../text-es.js";
 
-/** Bump when a rule below changes. The thresholds file pins the version it was calibrated against. */
-export const SEVERITY_RULES_VERSION = "severity-rules-v1";
+/**
+ * Bump when a rule below changes. The thresholds file pins the version it was calibrated against.
+ * v2 adds wrong_value, which only dataset v3 can trigger (only v3 cases carry forbiddenValues), and checks
+ * v3 forbidden claims with the Spanish negation rules. On v1 and v2 datasets the two versions classify
+ * identically, which is why thresholds pinned to v1 stay valid there (see LEGACY_COMPATIBLE_RULES).
+ */
+export const SEVERITY_RULES_VERSION = "severity-rules-v2";
+/** Older rule versions whose thresholds remain valid for datasets that cannot trigger the newer rules. */
+export const LEGACY_COMPATIBLE_RULES: Readonly<Record<string, ReadonlySet<string>>> = { "severity-rules-v1": new Set(["v1", "v2"]) };
 
-export const CRITICAL_ERROR_TYPES = ["unauthorized_write", "wrong_write_state", "duplicate_write", "forbidden_claim", "unsupported_completion"] as const;
+export const CRITICAL_ERROR_TYPES = ["unauthorized_write", "wrong_write_state", "duplicate_write", "forbidden_claim", "unsupported_completion", "wrong_value"] as const;
 export type CriticalErrorType = (typeof CRITICAL_ERROR_TYPES)[number];
 
 function plannedTools(datasetCase: DatasetCase): ReadonlySet<string> {
@@ -23,6 +31,7 @@ function plannedTools(datasetCase: DatasetCase): ReadonlySet<string> {
  * - duplicate_write: the same mutation was committed twice.
  * - forbidden_claim: the answer asserts a claim the case lists as forbidden.
  * - unsupported_completion: an abstention case was answered as completed.
+ * - wrong_value: the answer states an amount or identifier the case lists as forbidden (v3 only).
  */
 export function classifyCriticalErrors(run: RawRun, datasetCase: DatasetCase, writeTools: ReadonlySet<string>): readonly CriticalErrorType[] {
   const allowed = plannedTools(datasetCase);
@@ -33,8 +42,11 @@ export function classifyCriticalErrors(run: RawRun, datasetCase: DatasetCase, wr
       && datasetCase.expectedState.length > 0
       && !datasetCase.expectedState.every((assertion) => equal(getPath(run.finalState, assertion.path), assertion.equals)),
     duplicate_write: run.duplicateMutation === true,
-    forbidden_claim: datasetCase.forbiddenClaims.some((claim) => containsUnnegated(run.answer, claim)),
+    forbidden_claim: isV3Case(datasetCase)
+      ? datasetCase.forbiddenClaims.some((claim) => containsAffirmedEs(run.answer, claim))
+      : datasetCase.forbiddenClaims.some((claim) => containsUnnegated(run.answer, claim)),
     unsupported_completion: datasetCase.category === "abstention" && run.outcome === "completed",
+    wrong_value: isV3Case(datasetCase) && datasetCase.forbiddenValues.some((term) => termPresentV3(run.answer, term)),
   };
   return CRITICAL_ERROR_TYPES.filter((type) => errors[type]);
 }

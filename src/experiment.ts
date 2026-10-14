@@ -440,5 +440,5 @@ function deterministicOrder<T>(items: readonly T[], seed: number): T[] {
 }
 
 function stratifiedCases(cases: readonly DatasetCase[]): readonly DatasetCase[] {
-  return ["lookup", "multi_tool", "recovery", "abstention"].flatMap((category) => cases.filter((item) => item.category === category).slice(0, 1));
+  return ["lookup", "multi_tool", "recovery", "abstention", "confirmation"].flatMap((category) => cases.filter((item) => item.category === category).slice(0, 1));
 }
