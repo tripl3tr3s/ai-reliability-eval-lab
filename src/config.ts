@@ -27,6 +27,9 @@ export const RESOURCE_VERSION = "operational-resources-v2";
 export const PROMPT_VERSION = "agent-prompt-v2";
 export const LEGACY_RESOURCE_VERSION = "operational-resources-v1";
 export const LEGACY_PROMPT_VERSION = "agent-prompt-v1";
+/** Dataset v3: Spanish system prompt and policies of the sat-v3 pack. */
+export const PROMPT_VERSION_V3 = "agent-prompt-v3";
+export const RESOURCE_VERSION_V3 = "operational-resources-v3";
 
 export const agentPolicySchema = z.object({
   maxIterations: z.number().int().positive().max(6),

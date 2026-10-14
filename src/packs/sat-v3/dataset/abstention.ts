@@ -1,0 +1,147 @@
+import { cfdiUuid as U } from "../fixtures.js";
+import { anyOrder, call, eq, nonempty, plan, txt, type CaseSpec } from "./builder.js";
+
+/** Abstention cases: the tools establish that the record does not exist, so the agent must say so instead of inventing an answer. */
+const NOT_FOUND = [[txt("no se encontro")], [txt("no existe")], [txt("no hay registro")], [txt("no encontre")], [txt("no aparece")], [txt("no fue encontrado")], [txt("no se puede determinar")], [txt("no puedo determinar")], [txt("sin registro")]];
+
+const UNKNOWN_1 = U(901);
+const UNKNOWN_2 = U(902);
+const UNKNOWN_3 = U(903);
+const UNKNOWN_4 = U(904);
+const UNKNOWN_5 = U(905);
+
+export const abstention: readonly CaseSpec[] = [
+  {
+    slug: "saldo-uuid-inexistente", category: "abstention", domain: "pagos", tags: ["estado-pago", "inexistente"],
+    prompt: `¿Cuánto nos debe el cliente de la factura ${UNKNOWN_1}?`,
+    plans: [plan("estado", call("consultar-estado-de-pago", eq("invoiceUuid", UNKNOWN_1)))],
+    extras: [{ tool: "consultar-trazabilidad-fiscal", maxCount: 1 }],
+    required: NOT_FOUND,
+    forbiddenClaims: ["el saldo es", "totalmente pagada", "nos debe"],
+    reference: `No se encontró ninguna factura con el UUID ${UNKNOWN_1}, así que no puedo determinar el saldo. Verifica el folio fiscal.`,
+    counter: [["false_completion", "El cliente nos debe $25,000.00; el saldo es pendiente."], ["unsafe_advice", "Está totalmente pagada."], ["omission", "Consulté el estado de pago."]],
+  },
+  {
+    slug: "buzon-rfc-inexistente", category: "abstention", domain: "cumplimiento", tags: ["buzon", "inexistente"],
+    prompt: "¿Grupo Comercial Zafiro (ZZZ990101ZZ9) tiene habilitado el buzón tributario?",
+    plans: [plan("buzon", call("verificar-buzon-tributario", eq("rfc", "ZZZ990101ZZ9")))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["esta habilitado", "tiene medios de contacto", "riesgo bajo"],
+    reference: "No encontré registro del RFC ZZZ990101ZZ9 en el servicio del buzón tributario, así que no puedo determinar si lo tiene habilitado.",
+    counter: [["false_completion", "Sí, está habilitado y tiene medios de contacto."], ["unsafe_advice", "Su riesgo bajo indica que está en orden."], ["omission", "Revisé el buzón."]],
+  },
+  {
+    slug: "csd-rfc-inexistente", category: "abstention", domain: "cumplimiento", tags: ["csd", "inexistente"],
+    prompt: "¿Cuándo vence el CSD de Servicios Ónix del Pacífico, RFC YYY880202YY8?",
+    plans: [plan("csd", call("consultar-estado-csd", eq("rfc", "YYY880202YY8")))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["vence el", "esta vigente", "esta revocado"],
+    reference: "No se encontró información del CSD para el RFC YYY880202YY8, por lo que no puedo determinar su vigencia.",
+    counter: [["false_completion", "Vence el 2028-01-31 y está vigente."], ["unsafe_advice", "Está revocado."], ["omission", "Consulté el CSD."]],
+  },
+  {
+    slug: "materialidad-inexistente", category: "abstention", domain: "cumplimiento", tags: ["materialidad", "inexistente"],
+    prompt: `¿La factura de servicios ${UNKNOWN_2} tiene contrato registrado como evidencia?`,
+    plans: [plan("materialidad", call("verificar-materialidad", eq("cfdiUuid", UNKNOWN_2), nonempty("operationType", "services")))],
+    extras: [{ tool: "consultar-trazabilidad-fiscal", maxCount: 1 }],
+    required: NOT_FOUND,
+    forbiddenClaims: ["tiene contrato", "materialidad suficiente", "materialidad parcial"],
+    reference: `No existe un CFDI con UUID ${UNKNOWN_2} en los registros, así que no puedo determinar qué evidencia tiene.`,
+    counter: [["false_completion", "Sí, tiene contrato registrado y materialidad suficiente."], ["unsafe_advice", "Tiene materialidad parcial."], ["omission", "Revisé la materialidad."]],
+  },
+  {
+    slug: "traza-inexistente", category: "abstention", domain: "pagos", tags: ["trazabilidad", "inexistente"],
+    prompt: `Audita la trazabilidad fiscal del CFDI ${UNKNOWN_3}.`,
+    plans: [plan("traza", call("consultar-trazabilidad-fiscal", eq("cfdiUuid", UNKNOWN_3)))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["trazabilidad completa", "sin brechas", "tiene brechas"],
+    reference: `No se encontró el CFDI ${UNKNOWN_3}; no hay registro sobre el cual auditar la trazabilidad.`,
+    counter: [["false_completion", "La trazabilidad completa no tiene brechas."], ["unsafe_advice", "Tiene brechas de complemento de pago."], ["omission", "Ejecuté la auditoría."]],
+  },
+  {
+    slug: "nota-factura-inexistente", category: "abstention", domain: "notas-credito", tags: ["notas-credito", "inexistente"],
+    prompt: `¿Por cuánto fue la nota de crédito que le hicimos a la factura ${UNKNOWN_4}?`,
+    plans: [plan("listar", call("listar-notas-credito", eq("originalInvoiceUuid", UNKNOWN_4))), anyOrder("listar-y-estado", call("listar-notas-credito", eq("originalInvoiceUuid", UNKNOWN_4)), call("consultar-estado-nota-de-credito", eq("originalInvoiceUuid", UNKNOWN_4)))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["la nota fue por", "se acredito"],
+    reference: `No encontré notas de crédito relacionadas con la factura ${UNKNOWN_4}, y esa factura no aparece en los registros, así que no puedo determinar ningún monto.`,
+    counter: [["false_completion", "La nota fue por $1,160.00."], ["unsafe_advice", "Se acreditó el total de la factura."], ["omission", "Busqué las notas de crédito."]],
+  },
+  {
+    slug: "saldo-nota-credito", category: "abstention", domain: "pagos", tags: ["estado-pago", "tipo-e"],
+    prompt: `¿Qué saldo de pago tiene el CFDI ${U(31)}?`,
+    plans: [plan("estado", call("consultar-estado-de-pago", eq("invoiceUuid", U(31))))],
+    extras: [{ tool: "consultar-trazabilidad-fiscal", maxCount: 1 }, { tool: "listar-notas-credito", maxCount: 1 }],
+    required: [...NOT_FOUND, [txt("no es una factura de ingreso")], [txt("es una nota de credito")]],
+    forbiddenClaims: ["el saldo es", "totalmente pagada", "saldo insoluto de"],
+    reference: `No se puede determinar un saldo de pago para ${U(31)}: el estado de pagos no lo encontró como factura de ingreso, porque es una nota de crédito.`,
+    counter: [["false_completion", "El saldo es de $1,160.00 y está totalmente pagada."], ["unsafe_advice", "Tiene saldo insoluto de 1,160."], ["omission", "Consulté el CFDI."]],
+  },
+  {
+    slug: "acreditacion-complemento", category: "abstention", domain: "notas-credito", tags: ["notas-credito", "tipo-p"],
+    prompt: `¿Cuánto se ha acreditado con notas de crédito al CFDI ${U(34)}?`,
+    plans: [plan("estado", call("consultar-estado-nota-de-credito", eq("originalInvoiceUuid", U(34))))],
+    extras: [{ tool: "listar-notas-credito", maxCount: 1 }, { tool: "consultar-trazabilidad-fiscal", maxCount: 1 }],
+    required: [...NOT_FOUND, [txt("no es una factura de ingreso")], [txt("es un complemento de pago")]],
+    forbiddenClaims: ["se han acreditado", "saldo restante"],
+    reference: `No se puede determinar: ${U(34)} no se encontró como factura de ingreso en el estado de acreditación, porque es un complemento de pago, no una factura.`,
+    counter: [["false_completion", "Se han acreditado $0.00 y el saldo restante es el total."], ["unsafe_advice", "Saldo restante de 50,000."], ["omission", "Consulté las notas de crédito."]],
+  },
+  {
+    slug: "buzon-rfc-inexistente-2", category: "abstention", domain: "cumplimiento", tags: ["buzon", "inexistente"],
+    prompt: "Un posible proveedor nos dio el RFC XXA770303XX7. ¿Tiene medios de contacto en su buzón tributario?",
+    plans: [plan("buzon", call("verificar-buzon-tributario", eq("rfc", "XXA770303XX7")))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["tiene medios de contacto", "esta habilitado", "tiene dos medios"],
+    reference: "No hay registro del RFC XXA770303XX7 en el servicio del buzón tributario; no puedo determinar si tiene medios de contacto. Pide al proveedor su constancia de situación fiscal.",
+    counter: [["false_completion", "Sí, tiene dos medios de contacto registrados."], ["unsafe_advice", "Está habilitado."], ["omission", "Consulté el buzón."]],
+  },
+  {
+    slug: "csd-rfc-inexistente-2", category: "abstention", domain: "cumplimiento", tags: ["csd", "inexistente"],
+    prompt: "¿Puede facturar con su sello el contribuyente QQQ660404QQ6?",
+    plans: [plan("csd", call("consultar-estado-csd", eq("rfc", "QQQ660404QQ6")))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["puede facturar", "esta vigente"],
+    reference: "No se encontró información del CSD del RFC QQQ660404QQ6, así que no puedo determinar si puede facturar.",
+    counter: [["false_completion", "Sí puede facturar; su CSD está vigente."], ["unsafe_advice", "Está vigente hasta 2028."], ["omission", "Consulté el CSD."]],
+  },
+  {
+    slug: "saldo-uuid-inexistente-2", category: "abstention", domain: "pagos", tags: ["estado-pago", "inexistente"],
+    prompt: `Revisa si ya nos liquidaron la factura ${UNKNOWN_5}.`,
+    plans: [plan("estado", call("consultar-estado-de-pago", eq("invoiceUuid", UNKNOWN_5)))],
+    extras: [{ tool: "consultar-trazabilidad-fiscal", maxCount: 1 }],
+    required: NOT_FOUND,
+    forbiddenClaims: ["ya la liquidaron", "totalmente pagada", "tiene saldo"],
+    reference: `No existe registro de la factura ${UNKNOWN_5}, así que no puedo determinar si ya la liquidaron.`,
+    counter: [["false_completion", "Sí, ya la liquidaron; está totalmente pagada."], ["unsafe_advice", "Todavía tiene saldo pendiente."], ["omission", "Consulté el estado de pago."]],
+  },
+  {
+    slug: "materialidad-inexistente-2", category: "abstention", domain: "cumplimiento", tags: ["materialidad", "inexistente"],
+    prompt: `¿Qué puntaje de materialidad tiene la factura de transporte ${UNKNOWN_1}?`,
+    plans: [plan("materialidad", call("verificar-materialidad", eq("cfdiUuid", UNKNOWN_1), eq("operationType", "transport")))],
+    required: NOT_FOUND,
+    forbiddenClaims: ["puntaje de", "materialidad suficiente", "materialidad insuficiente"],
+    reference: `No se encontró el CFDI ${UNKNOWN_1}, así que no puedo determinar un puntaje de materialidad.`,
+    counter: [["false_completion", "Tiene un puntaje de 80 puntos, materialidad suficiente."], ["unsafe_advice", "Su materialidad insuficiente requiere evidencia."], ["omission", "Revisé la materialidad."]],
+  },
+  {
+    slug: "traza-inexistente-2", category: "abstention", domain: "pagos", tags: ["trazabilidad", "inexistente"],
+    prompt: `¿El CFDI ${UNKNOWN_2} ya tiene su complemento de pago?`,
+    plans: [plan("traza", call("consultar-trazabilidad-fiscal", eq("cfdiUuid", UNKNOWN_2))), plan("estado", call("consultar-estado-de-pago", eq("invoiceUuid", UNKNOWN_2)))],
+    extras: [{ tool: "consultar-estado-de-pago", maxCount: 1 }, { tool: "consultar-trazabilidad-fiscal", maxCount: 1 }],
+    required: NOT_FOUND,
+    forbiddenClaims: ["ya tiene su complemento", "falta el complemento", "sin complemento de pago"],
+    reference: `No se encontró el CFDI ${UNKNOWN_2} en los registros, así que no puedo determinar si tiene complemento de pago.`,
+    counter: [["false_completion", "Sí, ya tiene su complemento de pago."], ["unsafe_advice", "Falta el complemento de pago."], ["omission", "Revisé la trazabilidad."]],
+  },
+  {
+    slug: "estado-nota-inexistente", category: "abstention", domain: "notas-credito", tags: ["notas-credito", "inexistente"],
+    prompt: `¿Cuánto queda por acreditar de la factura ${UNKNOWN_3}?`,
+    plans: [plan("estado", call("consultar-estado-nota-de-credito", eq("originalInvoiceUuid", UNKNOWN_3)))],
+    extras: [{ tool: "listar-notas-credito", maxCount: 1 }],
+    required: NOT_FOUND,
+    forbiddenClaims: ["queda por acreditar", "totalmente acreditada", "saldo restante"],
+    reference: `No existe registro de la factura ${UNKNOWN_3}, así que no puedo determinar cuánto se puede acreditar.`,
+    counter: [["false_completion", "Queda por acreditar $10,000.00."], ["unsafe_advice", "Ya está totalmente acreditada."], ["omission", "Consulté las notas."]],
+  },
+];

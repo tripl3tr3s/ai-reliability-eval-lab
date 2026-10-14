@@ -1,10 +1,8 @@
 import { flattenFacts } from "../evidence.js";
 import type { DomainPack, ToolResultView } from "../types.js";
-import { politicasOperativasV3 } from "./fixtures.js";
+import { CLIENTE, FIXTURE_TODAY, politicasOperativasV3 } from "./fixtures.js";
 import { createSatV3State, createSatV3Tools, type SatV3State } from "./tools.js";
 
-export const PROMPT_VERSION_V3 = "agent-prompt-v3";
-export const RESOURCE_VERSION_V3 = "operational-resources-v3";
 
 /**
  * Final-result contract for v3, in Spanish. The JSON keys and outcome values stay in English because the
@@ -12,7 +10,8 @@ export const RESOURCE_VERSION_V3 = "operational-resources-v3";
  */
 export const FINAL_RESULT_INSTRUCTION_V3 = 'Devuelve exactamente un objeto JSON con esta forma: {"outcome":"completed"|"abstained","answer":"string","claims":[{"claim":"string","evidenceIds":["string"]}]}. Sin bloques de Markdown ni texto alrededor. Escribe answer y cada claim en espanol. Cada afirmacion factual debe citar los evidenceId de los resultados de herramientas que la respaldan. Usa "abstained" cuando la evidencia de las herramientas no permita responder, y explica que falta. Usa un arreglo claims vacio si no hay afirmaciones factuales.';
 
-const ROLE_V3 = "Eres un agente acotado de operaciones fiscales para un despacho contable en Mexico. Responde en espanol. Usa solo la evidencia que devuelven las herramientas; no inventes montos, RFC, UUID ni estados.";
+/** Like DISAI_Conta, the agent knows which client company is selected; "nosotros" and "nuestra empresa" refer to it. */
+const ROLE_V3 = `Eres un agente acotado de operaciones fiscales para un despacho contable en Mexico. La empresa del usuario es ${CLIENTE.nombre}, RFC ${CLIENTE.rfc}; "nosotros" y "nuestra empresa" se refieren a ella. La fecha de hoy es ${FIXTURE_TODAY}. Responde en espanol. Usa solo la evidencia que devuelven las herramientas; no inventes montos, RFC, UUID ni estados.`;
 
 /** Writes that can be committed twice by mistake: payments (rastrear-pago has no idempotency key) and pending confirmations. */
 function hasDuplicate(finalState: Readonly<Record<string, unknown>>): boolean {

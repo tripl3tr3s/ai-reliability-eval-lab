@@ -13,6 +13,8 @@ const PlanArgumentMatcherSchema = z.union([
   z.object({
     path: z.string().min(1),
     operator: z.literal("nonempty"),
+    /** One acceptable value, used only by the scripted mock to build schema-valid arguments. Never scored. */
+    example: z.unknown().optional(),
   }),
   z.object({
     path: z.string().min(1),
@@ -135,7 +137,7 @@ export const DatasetCaseV2Schema = z.object({
 });
 
 const AmountTermSchema = z.object({ type: z.literal("amount"), value: z.number(), currency: z.enum(["MXN", "USD"]).optional() });
-const IdentifierTermSchema = z.object({ type: z.literal("identifier"), value: z.string().min(3) });
+const IdentifierTermSchema = z.object({ type: z.literal("identifier"), value: z.string().min(2) });
 
 /**
  * v3 assertion terms. "text" is matched accent- and case-insensitively with Spanish negation; "amount" parses

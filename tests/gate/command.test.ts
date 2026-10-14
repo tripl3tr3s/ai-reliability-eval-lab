@@ -57,7 +57,7 @@ describe("scripted mock run", () => {
     const model = createScriptedModel(dataset.cases);
     const request = { model: "any", maxOutputTokens: 10, signal: new AbortController().signal, tools: [{ name: "get_document", description: "", inputSchema: {} }] };
     await expect(model.generate({ ...request, messages: [{ role: "user", content: "Not a dataset prompt." }] })).rejects.toThrow(/not in the dataset/u);
-    await expect(runMockExperiment({ configPath: "config/smoke.v1.json", outputPath: path, profile: "clean" })).rejects.toThrow(/v2 dataset/u);
+    await expect(runMockExperiment({ configPath: "config/smoke.v1.json", outputPath: path, profile: "clean" })).rejects.toThrow(/accepted plans \(v2 or v3\)/u);
   });
 });
 

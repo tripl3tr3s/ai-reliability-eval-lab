@@ -2,7 +2,7 @@ import { appendFile, mkdir, readFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { z } from "zod";
 import type { AgentPolicy, ModelAdapter, ModelRoles, RunnerEvent, TelemetrySink, ToolDefinition } from "./contracts.js";
-import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, RESOURCE_VERSION, resolveSlot, type AgentConfiguration, type ResolvedSlot } from "./config.js";
+import { AGENT_CONFIGURATIONS, CONFIGURATION_IDS, DEFAULT_MODEL_ROLES, LEGACY_PROMPT_VERSION, LEGACY_RESOURCE_VERSION, PROMPT_VERSION, PROMPT_VERSION_V3, RESOURCE_VERSION, RESOURCE_VERSION_V3, resolveSlot, type AgentConfiguration, type ResolvedSlot } from "./config.js";
 import { loadDataset, type DatasetCase } from "./dataset.js";
 import type { FaultKind } from "./faults.js";
 import { runAgent } from "./runner.js";
@@ -22,13 +22,15 @@ const ExperimentFileSchema = z.object({
   pricing: z.string().min(1),
   budgetUsd: z.number().positive(),
   estimatedCostPerRunUsd: z.number().positive(),
-  promptVersion: z.enum([LEGACY_PROMPT_VERSION, PROMPT_VERSION]),
-  resourceVersion: z.enum([LEGACY_RESOURCE_VERSION, RESOURCE_VERSION]),
+  promptVersion: z.enum([LEGACY_PROMPT_VERSION, PROMPT_VERSION, PROMPT_VERSION_V3]),
+  resourceVersion: z.enum([LEGACY_RESOURCE_VERSION, RESOURCE_VERSION, RESOURCE_VERSION_V3]),
   stratifiedSmoke: z.boolean().optional(),
 }).superRefine((value, context) => {
   const expected = value.dataset.endsWith("/v1")
     ? { prompt: LEGACY_PROMPT_VERSION, resource: LEGACY_RESOURCE_VERSION }
-    : { prompt: PROMPT_VERSION, resource: RESOURCE_VERSION };
+    : value.dataset.endsWith("/v3")
+      ? { prompt: PROMPT_VERSION_V3, resource: RESOURCE_VERSION_V3 }
+      : { prompt: PROMPT_VERSION, resource: RESOURCE_VERSION };
   if (value.promptVersion !== expected.prompt) context.addIssue({ code: "custom", path: ["promptVersion"], message: `Expected ${expected.prompt} for ${value.dataset}` });
   if (value.resourceVersion !== expected.resource) context.addIssue({ code: "custom", path: ["resourceVersion"], message: `Expected ${expected.resource} for ${value.dataset}` });
 });
@@ -303,7 +305,8 @@ async function runOne(
         return tool.execute(toolInput, context);
       },
     }));
-  const policy = { ...configured.policy, maxCostUsd: Math.min(configured.policy.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
+  // The allowlist is the case's pack tools: for v1 and v2 it equals the fiscal tool list the legacy arms declare.
+  const policy = { ...configured.policy, allowedTools: tools.map(({ name }) => name), maxCostUsd: Math.min(configured.policy.maxCostUsd, experiment.budgetUsd), ...policyOverrides };
   const progressAdapter = wrapAdapter(adapter, async (request) => {
     await onPhase?.("model");
     return adapter.generate(request);

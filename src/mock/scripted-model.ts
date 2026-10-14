@@ -1,5 +1,5 @@
 import type { ModelAdapter, ModelRequest, ModelResponse } from "../contracts.js";
-import type { DatasetCase, DatasetCaseV2 } from "../dataset.js";
+import { isV3Case, type DatasetCase, type DatasetCaseV2, type DatasetCaseV3 } from "../dataset.js";
 import { MOCK_MODEL_PREFIX } from "../raw-run.js";
 
 export const SCRIPTED_MODEL_ID = `${MOCK_MODEL_PREFIX}scripted-v1`;
@@ -9,10 +9,17 @@ export type ScriptedProfile = (typeof SCRIPTED_PROFILES)[number];
 export type ScriptedBehaviour = "follow-plan" | "wrong-answer" | "unauthorized-write";
 
 export interface ScriptedContext {
-  readonly datasetCase: DatasetCaseV2;
+  readonly datasetCase: DatasetCaseV2 | DatasetCaseV3;
   readonly caseIndex: number;
   /** True when the system prompt carries injected operational resources. */
   readonly resourcesInjected: boolean;
+  /** Model the request was sent to. */
+  readonly model: string;
+}
+
+export interface ScriptedModelOptions {
+  /** Models whose answers the regressed profile degrades even with resources injected (v3: the advanced-tier executor). */
+  readonly regressModels?: ReadonlySet<string>;
 }
 
 /**
@@ -20,13 +27,31 @@ export interface ScriptedContext {
  * - clean: always follows the first accepted plan and gives the required answer.
  * - regressed: identical with injected resources; without them every third case gets a wrong
  *   answer and write cases attempt an unplanned write. This makes the no-resource-injection
- *   arm a known regression against the routed arm.
+ *   arm a known regression against the routed arm. Dataset v3 has no resource ablation arm, so
+ *   createScriptedModel also degrades requests sent to `regressModels` (the advanced executor of the
+ *   production-mirror arm), making that arm a known regression against the direct reference.
  */
 export const PROFILE_BEHAVIOUR: Readonly<Record<ScriptedProfile, (context: ScriptedContext) => ScriptedBehaviour>> = {
   clean: () => "follow-plan",
   regressed: ({ caseIndex, resourcesInjected, datasetCase }) =>
     resourcesInjected ? "follow-plan" : datasetCase.expectedState.length > 0 ? "unauthorized-write" : caseIndex % 3 === 0 ? "wrong-answer" : "follow-plan",
 };
+
+/** Sets a dotted path ("payment.amount", "documentos.0.id") without mutating the input; numeric segments build arrays. */
+function setPath(target: unknown, path: string, value: unknown): unknown {
+  const [head, ...rest] = path.split(".");
+  const key = head!;
+  const container: Record<string, unknown> | unknown[] = Array.isArray(target)
+    ? [...target]
+    : target !== null && typeof target === "object" ? { ...(target as Record<string, unknown>) } : /^\d+$/u.test(key) ? [] : {};
+  const current = (container as Record<string, unknown>)[key];
+  const next = rest.length === 0 ? value : setPath(current ?? (/^\d+$/u.test(rest[0]!) ? [] : {}), rest.join("."), value);
+  if (Array.isArray(container)) {
+    const index = Number(key);
+    return Array.from({ length: Math.max(container.length, index + 1) }, (_, position): unknown => (position === index ? next : container[position]));
+  }
+  return { ...container, [key]: next };
+}
 
 function fillRequired(schema: Readonly<Record<string, unknown>> | undefined, input: Record<string, unknown>): Record<string, unknown> {
   const required = Array.isArray(schema?.required) ? schema.required.filter((key): key is string => typeof key === "string") : [];
@@ -40,8 +65,8 @@ const estimateTokens = (text: string): number => Math.ceil(text.length / 4);
  * case's first accepted plan one tool call per turn, and then returns the final JSON result.
  * It makes no network calls and reports zero cost.
  */
-export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (context: ScriptedContext) => ScriptedBehaviour = PROFILE_BEHAVIOUR.clean): ModelAdapter {
-  const scripted = cases.filter((item): item is DatasetCaseV2 => "acceptedPlans" in item);
+export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (context: ScriptedContext) => ScriptedBehaviour = PROFILE_BEHAVIOUR.clean, options: ScriptedModelOptions = {}): ModelAdapter {
+  const scripted = cases.filter((item): item is DatasetCaseV2 | DatasetCaseV3 => "acceptedPlans" in item);
   const byPrompt = new Map(scripted.map((item, caseIndex) => [item.prompt, { datasetCase: item, caseIndex }]));
   const respond = (request: ModelRequest, text: string, toolCalls: ModelResponse["toolCalls"]): ModelResponse => ({
     text,
@@ -57,19 +82,23 @@ export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (c
   });
   return {
     async generate(request) {
-      if (request.tools.length === 0) return respond(request, "multi-step", []);
       const prompt = request.messages.find(({ role }) => role === "user")?.content ?? "";
       const known = byPrompt.get(prompt);
+      if (request.tools.length === 0) {
+        // Routing request: the v3 domain router gets the case's expected domain (a perfect router); v2 gets a fixed label.
+        return known && isV3Case(known.datasetCase) ? respond(request, JSON.stringify({ domain: known.datasetCase.domain }), []) : respond(request, "multi-step", []);
+      }
       if (!known) throw new Error("Scripted model received a prompt that is not in the dataset");
       const { datasetCase } = known;
-      const resourcesInjected = request.messages.some(({ role, content }) => role === "system" && content.includes("Operational resources:"));
-      const mode = behaviour({ ...known, resourcesInjected });
+      const resourcesInjected = request.messages.some(({ role, content }) => role === "system" && (content.includes("Operational resources:") || content.includes("Politicas operativas:")));
+      const forcedRegression = PROFILE_BEHAVIOUR.regressed === behaviour && options.regressModels?.has(request.model) === true;
+      const mode = behaviour({ ...known, resourcesInjected: resourcesInjected && !forcedRegression, model: request.model });
       const plan = datasetCase.acceptedPlans[0]!;
       const turn = request.messages.filter(({ role }) => role === "tool").length;
       const schemaOf = (tool: string) => request.tools.find(({ name }) => name === tool)?.inputSchema;
       const call = plan.calls[turn];
       if (call) {
-        const input = Object.fromEntries(call.argumentMatchers.map((matcher) => [matcher.path, "equals" in matcher ? matcher.equals : `${datasetCase.id}-key`]));
+        const input = call.argumentMatchers.reduce<unknown>((acc, matcher) => setPath(acc, matcher.path, "operator" in matcher ? matcher.example ?? `${datasetCase.id}-key` : matcher.equals), {}) as Record<string, unknown>;
         return respond(request, "", [{ id: `call-${turn + 1}`, name: call.tool, input: fillRequired(schemaOf(call.tool), input) }]);
       }
       if (mode === "unauthorized-write" && turn === plan.calls.length) {
@@ -77,7 +106,9 @@ export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (c
         const write = plan.calls.some(({ tool }) => tool === forbidden) ? "match_payment" : forbidden;
         return respond(request, "", [{ id: `call-${turn + 1}`, name: write, input: fillRequired(schemaOf(write), { idempotencyKey: `${datasetCase.id}-unplanned` }) }]);
       }
-      const answer = mode === "follow-plan" ? datasetCase.requiredAssertions[0]!.map(({ includes }) => includes).join(". ") : "No result.";
+      const answer = isV3Case(datasetCase)
+        ? mode === "follow-plan" ? datasetCase.referenceAnswer : datasetCase.counterexamples[0]!.answer
+        : mode === "follow-plan" ? datasetCase.requiredAssertions[0]!.map(({ includes }) => includes).join(". ") : "No result.";
       return respond(request, JSON.stringify({ outcome: datasetCase.category === "abstention" ? "abstained" : "completed", answer, claims: [] }), []);
     },
   };
