@@ -34,12 +34,12 @@ import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } f
 export async function main(argv: readonly string[]): Promise<void> {
   const parsed = parseCliArguments(argv);
   if (parsed.command === "validate-dataset") {
-    const bundle = await loadDataset(parsed.manifestPath ?? "datasets/v2/manifest.json");
+    const bundle = await loadDataset(parsed.manifestPath ?? "datasets/v3/manifest.json");
     process.stdout.write(`Validated ${bundle.cases.length} cases (${bundle.hash})\n`);
     return;
   }
   if (parsed.command === "validate-config") {
-    const path = parsed.configPath ?? "config/full.v2.json";
+    const path = parsed.configPath ?? "config/full.v3.json";
     const config = await loadExperimentConfig(path);
     await loadPricingConfig(config.pricing);
     process.stdout.write(`Validated ${path}\n`);
@@ -50,7 +50,7 @@ export async function main(argv: readonly string[]): Promise<void> {
     return;
   }
   if (parsed.command === "gate") {
-    const configPath = parsed.configPath ?? "config/full.v2.json";
+    const configPath = parsed.configPath ?? "config/full.v3.json";
     const defaults = await gateDefaultsFor(configPath);
     const { report: gateReport } = await runGate({
       rawPath: parsed.rawPath ?? "runs/results.jsonl",
@@ -80,7 +80,7 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (parsed.command === "mock-run") {
     const outputPath = parsed.outputPath ?? "runs/mock/results.jsonl";
-    const runs = await runMockExperiment({ configPath: parsed.configPath ?? "config/full.v2.json", outputPath, profile: parsed.profile });
+    const runs = await runMockExperiment({ configPath: parsed.configPath ?? "config/full.v3.json", outputPath, profile: parsed.profile });
     process.stdout.write(`Wrote ${runs.length} mock runs (${parsed.profile} profile) to ${outputPath}\n`);
     return;
   }
@@ -89,7 +89,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 
 async function runLiveExperiment(options: Extract<CliArguments, { command: "run" }>): Promise<void> {
   const guided = options.interactive ? await guidedOptions(options) : null;
-  const configPath = guided?.configPath ?? options.configPath ?? "config/full.v2.json";
+  const configPath = guided?.configPath ?? options.configPath ?? "config/full.v3.json";
   const outputPath = guided?.outputPath ?? options.outputPath ?? "runs/results.jsonl";
   const eventsPath = guided?.eventsPath ?? options.eventsPath ?? "runs/events.jsonl";
   await validateRunArtifactTargets(outputPath, eventsPath);
@@ -181,12 +181,12 @@ function createGuidedPromptPort(): GuidedPromptPort {
     chooseConfiguration: () => prompts.select({
       ...io,
       message: "Choose an experiment configuration",
-      initialValue: "smoke-v2" as const,
+      initialValue: "smoke-v3" as const,
       options: [
-        { value: "smoke-v2" as const, label: "Smoke v2", hint: "24 jobs, recommended first run" },
-        { value: "full-v2" as const, label: "Full v2", hint: "450 jobs" },
-        { value: "smoke-v3" as const, label: "Smoke v3 (5.5 lineup, Spanish)", hint: "20 jobs, run before Full v3" },
+        { value: "smoke-v3" as const, label: "Smoke v3 (5.5 lineup, Spanish)", hint: "20 jobs, recommended first run" },
         { value: "full-v3" as const, label: "Full v3 (5.5 lineup, Spanish)", hint: "900 jobs" },
+        { value: "smoke-v2" as const, label: "Smoke v2 (previous benchmark)", hint: "24 jobs" },
+        { value: "full-v2" as const, label: "Full v2 (previous benchmark)", hint: "450 jobs" },
         { value: "custom" as const, label: "Custom configuration" },
       ],
     }),
@@ -215,7 +215,7 @@ async function report(options: Extract<CliArguments, { command: "report" }>): Pr
   await generateReport({
     rawPath: options.rawPath ?? "runs/results.jsonl",
     outputDirectory: options.outputPath ?? "reports/generated",
-    configPath: options.configPath ?? "config/full.v2.json",
+    configPath: options.configPath ?? "config/full.v3.json",
     ...(options.eventsPath === undefined ? {} : { eventsPath: options.eventsPath }),
   });
 }

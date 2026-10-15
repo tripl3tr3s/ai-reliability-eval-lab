@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Status | Accepted. Implemented on `feat/go-live-gate` (`6d37165`), not yet merged. |
+| Status | Accepted. Implemented in PR #1, merged as `76cc5e0` (commits `6d37165`). |
 | Related | [Architecture](../architecture.md) |
 
 ## Context

@@ -3,11 +3,13 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Applies to | `src/gate/`, `src/stats/`, `src/report-statistics.ts`, `config/thresholds.v1.json` |
-| Thresholds | `thresholds-v1`, severity rules `severity-rules-v1` |
+| Applies to | `src/gate/`, `src/stats/`, `src/report-statistics.ts`, `config/thresholds.v1.json`, `config/thresholds.v2.json` |
+| Thresholds | `thresholds-v1` with `severity-rules-v1` (datasets v1, v2); `thresholds-v2` with `severity-rules-v2` (dataset v3) |
 | Results | None. No complete live run exists. Every number below is a property of the method or of the sample size, not a measured result. |
 
 This note describes what the code does today. Where a choice was a judgement call it is listed in the ambiguity register with the alternative.
+
+**How to read it.** Sections 1 to 8 were written for dataset v2 (30 cases), and their worked numbers use n = 30. The method is the same for dataset v3; section 6a lists what changes at 90 cases and with `thresholds-v2`. Where a v2 number appears, the v3 equivalent is in 6a.
 
 ## 1. Decision the gate supports
 
@@ -129,6 +131,8 @@ Dataset v3 is gated with `thresholds-v2` and `severity-rules-v2`; everything abo
 
 ## 7. Limitations
 
+Written for v2; section 6a covers what v3 changes (90 Spanish cases, 17 tools shaped after sat-mcp, wrong-value detection). The synthetic-data, deterministic-scoring, bootstrap, provider-seeding, mock, and no-live-result limits apply to v3 unchanged.
+
 - **30 cases.** See section 5. Recovery has 8 cases and abstention has 2, so per-category conclusions are weaker still.
 - **Synthetic data.** Fixtures are fictional and tools run in process. The cases were written by hand; they are not a random sample of production traffic, so intervals describe variability across cases like these, not across real requests.
 - **Single domain.** Mexican fiscal operations with 8 synthetic tools and English prompts. Nothing here measures behaviour on other domains or on Spanish prompts.
@@ -149,6 +153,6 @@ Evidence that would move a decision for a given run:
 Changes that would alter the gate itself, each requiring a reviewed thresholds or code change with a new version:
 
 - A larger dataset: raise the minimum, tighten the critical limit toward the rate actually required, and switch register item 1 to the stricter policy.
-- Per-assertion severity labels (dataset v3): detect wrong figures as critical and bump the severity rules version.
+- Per-assertion severity labels: done for dataset v3 as `forbiddenValues` and `severity-rules-v2` (section 6a).
 - A first complete live run: recalibrate margins against observed discordance.
 - A different harm model (for example, tolerance for rejected write attempts): change register items 3 to 5 explicitly, not by loosening a number.

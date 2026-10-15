@@ -29,6 +29,8 @@ No complete live benchmark run exists yet. Nothing in this entry is a benchmark 
 
 ### Changed
 
+- Dataset v3 is the default: the CLI falls back to `config/full.v3.json` and `datasets/v3/manifest.json`, guided mode preselects Smoke v3, and the `live-smoke` and `full-benchmark` workflows (including scheduled and tag runs) default to v3. `pnpm gate:mock` and `pnpm validate` name their v2 inputs explicitly, so v2 coverage in CI is unchanged.
+- Documentation describes the current state: the README leads with status, a dataset and arms table, and a documentation map; the runbook covers v2 and v3 from one parameter table; stale lines in the architecture map, design note, decision records, and contributing guide were corrected, and the plan verification is marked as a historical record.
 - Artifact uploads in the live-smoke and full-benchmark workflows run even when the benchmark fails, so partial traces are kept. Pages publishes only from a successful run.
 - Each arm names its own model slots; legacy arms keep resolving provider roles and their requests are unchanged.
 - The tool allowlist comes from the case's domain pack (unchanged for v1 and v2).

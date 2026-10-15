@@ -8,10 +8,10 @@ on:
   workflow_dispatch:
     inputs:
       dataset:
-        description: "Benchmark dataset: v2 (legacy Sonnet 5 / Haiku 4.5 arms) or v3 (DISAI_Conta 5.5 lineup, Spanish)"
+        description: "Benchmark dataset: v3 (DISAI_Conta 5.5 lineup, Spanish) or v2 (previous Sonnet 5 / Haiku 4.5 arms)"
         type: choice
-        options: [v2, v3]
-        default: v2
+        options: [v3, v2]
+        default: v3
 
 permissions:
   contents: read
@@ -21,11 +21,11 @@ jobs:
     environment: full-benchmark
     runs-on: ubuntu-latest
     # v3 is 900 jobs on thinking models; GitHub-hosted runners stop jobs at 360 minutes.
-    timeout-minutes: ${{ (inputs.dataset || 'v2') == 'v3' && 360 || 120 }}
+    timeout-minutes: ${{ (inputs.dataset || 'v3') == 'v3' && 360 || 120 }}
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
-      DATASET: ${{ inputs.dataset || 'v2' }}
-      MAX_EXPERIMENT_COST_USD: ${{ (inputs.dataset || 'v2') == 'v3' && '40' || '25' }}
+      DATASET: ${{ inputs.dataset || 'v3' }}
+      MAX_EXPERIMENT_COST_USD: ${{ (inputs.dataset || 'v3') == 'v3' && '40' || '25' }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -42,7 +42,7 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: full-benchmark-${{ inputs.dataset || 'v2' }}-${{ github.sha }}
+          name: full-benchmark-${{ inputs.dataset || 'v3' }}-${{ github.sha }}
           path: |
             runs/
             reports/generated/

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Status | Accepted as a demonstration of the pattern. Implemented on `feat/go-live-gate` (`8976e03`, `533d2c5`, `0112ae3`), not yet merged. Not a production service. |
+| Status | Accepted as a demonstration of the pattern. Implemented in PR #1, merged as `76cc5e0` (commits `8976e03`, `533d2c5`, `0112ae3`). Not a production service. |
 | Related | [Gate ADR](2026-10-10-three-way-gate-with-versioned-thresholds.md), [architecture](../architecture.md) |
 
 ## Context

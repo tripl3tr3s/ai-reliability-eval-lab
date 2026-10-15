@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Status | Accepted. Implemented on `feat/go-live-gate` (`6a4db31`, `ca16cf9`), not yet merged. Threshold values are uncalibrated starting values. |
+| Status | Accepted. Implemented in PR #1, merged as `76cc5e0` (commits `6a4db31`, `ca16cf9`). Threshold values are uncalibrated starting values. |
 | Related | [Design note](../design-note.md), [unit of analysis ADR](2026-10-10-case-as-unit-of-analysis.md), [severity ADR](2026-10-10-derive-severity-by-rule.md) |
 
 ## Context

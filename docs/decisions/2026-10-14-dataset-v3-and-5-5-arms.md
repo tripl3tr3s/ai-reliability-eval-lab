@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-14 |
-| Status | Implemented. No live v3 run exists yet. |
+| Status | Implemented in PR #2, merged as `f5f4256`. No live v3 run exists yet. |
 | Supersedes | The configuration plan in [2026-10-03 model lineup](2026-10-03-model-lineup-benchmark-cost-estimates.md) (Option 1) and its Option 2 |
 | Related | [Design note](../design-note.md), [architecture](../architecture.md), `config/thresholds.v2.json` |
 

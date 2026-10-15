@@ -120,11 +120,11 @@ describe("gate command", () => {
 
 describe("gate exit codes as CI sees them", () => {
   it("exits 0 on a clean run, 1 on the synthetic regression, and 2 when the sample is too small", async () => {
-    const pass = await cli("gate", "--raw", clean, "--output", join(root, "cli-pass"));
+    const pass = await cli("gate", "--raw", clean, "--config", CONFIG, "--output", join(root, "cli-pass"));
     expect(pass).toMatchObject({ code: 0 });
     expect(pass.stdout).toContain("Gate PASS (mock data): routed vs direct-sonnet");
 
-    const block = await cli("gate", "--raw", regressed, "--candidate", "no-resource-injection", "--reference", "routed", "--output", join(root, "cli-block"));
+    const block = await cli("gate", "--raw", regressed, "--config", CONFIG, "--candidate", "no-resource-injection", "--reference", "routed", "--output", join(root, "cli-block"));
     expect(block).toMatchObject({ code: 1 });
     expect(block.stdout).toContain("Gate BLOCK");
     expect(block.stdout).toContain("BLOCK: 5 of 30 cases had a critical error");

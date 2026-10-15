@@ -1,10 +1,10 @@
 # Architecture: core and domain pack
 
-The lab has two kinds of code: a domain-free core (statistics, gate, audit, monitor, provider adapters) and a Mexican fiscal domain pack (fixtures, synthetic tools, dataset). This document maps every module and states where the boundary is enforced and where it is only described.
+The lab has two kinds of code: a domain-free core (statistics, gate, audit, monitor, provider adapters) and domain packs that supply tools, fixtures, case state, and prompts. Two packs exist: `fiscal-v2` (English, datasets v1 and v2) and `sat-v3` (Mexican Spanish, dataset v3). This document maps every module and states where the boundary is enforced and where it is only described.
 
 ## Enforced boundary
 
-New core code lives in its own directories, and ESLint (`eslint.config.js`, rule `no-restricted-imports`) fails the build if any of them imports a domain pack (`src/packs/**`, `fixtures`, `tools`, `efos-risk-graph`), the experiment loop, or the mock run.
+New core code lives in its own directories, and ESLint (`eslint.config.js`, rule `no-restricted-imports`) fails the build if any of them imports a domain pack (`src/packs/**`, `fixtures`, `tools`, `efos-risk-graph`), the experiment loop, or the mock run. `src/stats/` and `src/audit/` are also leaf libraries: ESLint rejects any import from outside their own directory. For the other three directories the "May import" column records current practice; only the domain-pack ban is enforced.
 
 | Directory | Role | May import |
 | --- | --- | --- |
@@ -24,7 +24,7 @@ New core code lives in its own directories, and ESLint (`eslint.config.js`, rule
 | `src/report-statistics.ts`, `src/raw-run.ts`, `src/report-command.ts` | Core | Work on raw rows and scores only |
 | `src/pricing.ts`, `src/telemetry.ts`, `src/run-signal.ts`, `src/faults.ts` | Core | |
 | `src/cli.ts`, `src/cli-options.ts`, `src/cli-ui.ts`, `src/guided-run.ts` | Core | Command wiring |
-| `src/report.ts`, `src/baseline.ts` | Core, with constants | `report.ts` hardcodes the 30 case, 3 configuration, 5 repeat completeness rule and the default configuration names |
+| `src/report.ts`, `src/baseline.ts` | Core | `report.ts` judges completeness against the experiment's own cases and configurations, with fixed minimums of two configurations and five repeats. `baseline.ts` holds the older point-estimate comparison; the gate replaced it for decisions |
 | `src/config.ts` | Mixed | Configuration ids, per-arm model slots and effort, tool allowlist, and default model roles for this benchmark |
 | `src/packs/types.ts`, `src/packs/index.ts`, `src/packs/evidence.ts` | Pack interface | `DomainPack`: tools, case state and its recorded projection, duplicate-mutation rule, evidence-fact projection, system prompt. The registry picks a pack from the dataset version and fails closed for an unknown one |
 | `src/packs/fiscal-v2/*` | Domain pack | Serves datasets v1 and v2 by wrapping `fixtures.ts` and `tools.ts`; the state projection, evidence facts, and system prompt were moved here unchanged from `runner.ts` and `experiment.ts` |
@@ -32,11 +32,13 @@ New core code lives in its own directories, and ESLint (`eslint.config.js`, rule
 | `src/contracts.ts` | Mixed | Provider contract is generic. `CaseState`, `FollowUp`, and `PaymentMatch` are fiscal shapes |
 | `src/runner.ts` | Core loop | The loop is generic. Case state and its projection come from the pack (default fiscal-v2) |
 | `src/scoring.ts` | Mixed | Plan and assertion scoring is generic. Text matching and evidence identifier patterns branch on the case's dataset version (English for v1 and v2, Spanish for v3) instead of coming from the pack, so the gate and report keep scoring from cases alone |
-| `src/dataset.ts` | Mixed | Schema is generic. The loader requires exactly 30 cases split 10/10/8/2 |
+| `src/dataset.ts` | Mixed | Schema is generic; the v3 case schema extends it with `forbiddenValues`, `allowedExtraCalls`, a reference answer, and counterexamples. The loader checks per-version case and category counts (`CASE_COUNTS`: 30 for v1 and v2, 90 for v3) |
 | `src/experiment.ts` | Glue | Orchestration and routing are generic. Tools, state, evidence facts, duplicate detection, and the system prompt come from the case's pack |
 | `src/gate-command.ts`, `src/mock/*` | Glue | Join the core to this domain pack: they read the tool definitions and the dataset |
-| `src/fixtures.ts`, `src/tools.ts` | Domain pack | Fictional documents, payments, supplier statuses, policies, the 8 synthetic tools, and all use of `efos-risk-graph` |
-| `datasets/v1`, `datasets/v2` | Domain pack | Cases, plans, assertions, fault schedules |
+| `src/fixtures.ts`, `src/tools.ts` | Domain pack (fiscal-v2) | Fictional documents, payments, supplier statuses, policies, the 8 synthetic tools, and all use of `efos-risk-graph` |
+| `src/text-es.ts` | Domain helper | Spanish matching for v3: accent folding, clause-scoped negation, numeric amount parsing. Used by `scoring.ts` and the severity rules |
+| `datasets/v1`, `datasets/v2` | Domain pack (fiscal-v2) | Cases, plans, assertions, fault schedules, as committed JSONL |
+| `datasets/v3` | Domain pack (sat-v3) | Generated: authored in `src/packs/sat-v3/dataset/*.ts` and written by `pnpm dataset:build:v3`. Edit the TypeScript, never the JSONL |
 
 ## Why files were not moved
 
