@@ -19,7 +19,7 @@ export CONFIG="config/full.$DATASET.json"
 | Arms | `prod-routed-5-5` (candidate), `direct-sonnet-5-5` (reference) | `routed` (candidate), `direct-sonnet` (reference), `no-resource-injection` (ablation) |
 | Models (pinned in `src/adapter.ts`) | `claude-haiku-5-5`, `claude-sonnet-5-5`, `claude-opus-5-5` | `claude-sonnet-5`, `claude-haiku-4-5-20251001` |
 | Pricing file | `config/pricing.v2.json` | `config/pricing.v1.json` |
-| Thresholds (picked by the gate from the config) | `config/thresholds.v2.json` | `config/thresholds.v1.json` |
+| Thresholds (picked by the gate from the config) | `config/thresholds.v3.json` (Bonett-Price on the all-pass outcome; `thresholds.v2.json` replays earlier decisions) | `config/thresholds.v1.json` |
 | Run limits | `V3_AGENT_POLICY` in `src/config.ts`: 150 000 tokens and 180 s per run, uncalibrated | 12 000 tokens and 120 s per run |
 
 `budgetUsd` is the hard ceiling. `MAX_EXPERIMENT_COST_USD` can only lower it, never raise it. The preflight refuses to start when jobs x `estimatedCostPerRunUsd` exceeds the ceiling.
