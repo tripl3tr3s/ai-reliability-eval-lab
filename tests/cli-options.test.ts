@@ -87,6 +87,10 @@ describe("CLI argument parsing", () => {
     expect(parseCliArguments(["scoring-contract"])).toEqual({ command: "scoring-contract", write: false });
     expect(parseCliArguments(["report-check", "--summary", "reports/generated/x/summary.json"])).toEqual({ command: "report-check", summaryPath: "reports/generated/x/summary.json" });
     expect(() => parseCliArguments(["report-check"])).toThrow();
+    expect(parseCliArguments(["scorer-audit-sample", "--raw", "runs/raw.jsonl", "--per-stratum", "40", "--seed", "7"])).toEqual({ command: "scorer-audit-sample", rawPath: "runs/raw.jsonl", perStratum: 40, seed: 7 });
+    expect(() => parseCliArguments(["scorer-audit-sample", "--raw", "runs/raw.jsonl", "--per-stratum", "0"])).toThrow();
+    expect(() => parseCliArguments(["scorer-audit-sample"])).toThrow();
+    expect(parseCliArguments(["scorer-audit-score", "--key", "k.json", "--labels", "l.json", "--output", "out"])).toEqual({ command: "scorer-audit-score", keyPath: "k.json", labelsPath: "l.json", outputPath: "out" });
     expect(parseCliArguments(["scoring-contract", "--write", "--rationale", "Scorer changed to fix a negation bug."])).toEqual({ command: "scoring-contract", write: true, rationale: "Scorer changed to fix a negation bug." });
     expect(() => parseCliArguments(["scoring-contract", "--write"])).toThrow(/--rationale/u);
     expect(() => parseCliArguments(["scoring-contract", "--write", "--rationale", "short"])).toThrow();

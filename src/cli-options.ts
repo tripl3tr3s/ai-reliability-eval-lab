@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
-export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo|scoring-contract|report-check>";
+export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo|scoring-contract|report-check|scorer-audit-sample|scorer-audit-score>";
 
 const ProgressModeSchema = z.enum(["auto", "plain", "quiet"]);
 export type ProgressMode = z.infer<typeof ProgressModeSchema>;
@@ -100,6 +100,15 @@ export type CliArguments =
   | { readonly command: "scoring-contract"; readonly write: false }
   | { readonly command: "scoring-contract"; readonly write: true; readonly rationale: string }
   | { readonly command: "report-check"; readonly summaryPath: string }
+  | {
+      readonly command: "scorer-audit-sample";
+      readonly rawPath: string;
+      readonly configPath?: string;
+      readonly outputPath?: string;
+      readonly perStratum?: number;
+      readonly seed?: number;
+    }
+  | { readonly command: "scorer-audit-score"; readonly keyPath: string; readonly labelsPath: string; readonly outputPath: string }
   | {
       readonly command: "mock-run";
       readonly configPath?: string;
@@ -250,6 +259,34 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
     const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { summary: { type: "string" } } });
     const parsed = z.object({ summary: CliPathSchema }).strict().parse(values);
     return { command, summaryPath: parsed.summary };
+  }
+  if (command === "scorer-audit-sample") {
+    const { values } = parseArgs({
+      args: arguments_,
+      allowPositionals: false,
+      strict: true,
+      options: { raw: { type: "string" }, config: { type: "string" }, output: { type: "string" }, "per-stratum": { type: "string" }, seed: { type: "string" } },
+    });
+    const parsed = z.object({
+      raw: CliPathSchema,
+      config: CliPathSchema.optional(),
+      output: CliPathSchema.optional(),
+      "per-stratum": z.coerce.number().int().min(1).max(500).optional(),
+      seed: z.coerce.number().int().min(0).max(2 ** 32 - 1).optional(),
+    }).strict().parse(values);
+    return {
+      command,
+      rawPath: parsed.raw,
+      ...(parsed.config === undefined ? {} : { configPath: parsed.config }),
+      ...(parsed.output === undefined ? {} : { outputPath: parsed.output }),
+      ...(parsed["per-stratum"] === undefined ? {} : { perStratum: parsed["per-stratum"] }),
+      ...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+    };
+  }
+  if (command === "scorer-audit-score") {
+    const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { key: { type: "string" }, labels: { type: "string" }, output: { type: "string" } } });
+    const parsed = z.object({ key: CliPathSchema, labels: CliPathSchema, output: CliPathSchema }).strict().parse(values);
+    return { command, keyPath: parsed.key, labelsPath: parsed.labels, outputPath: parsed.output };
   }
   if (command === "mock-run") {
     const { values } = parseArgs({

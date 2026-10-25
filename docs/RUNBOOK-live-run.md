@@ -133,7 +133,7 @@ Statistical review:
 - [ ] For every critical error the gate lists, read the run. Confirm the severity rule fired for the right reason.
 - [ ] Spot-check at least five failing and five passing runs against the scorer: text matching can accept a wrong answer that contains the required phrase, or reject a correct paraphrase.
 - [ ] Do not report per-category results as findings when the category is small: in v2, recovery (8 cases) and abstention (2); in v3, every category has 14 to 24 cases, so per-category intervals are wide too.
-- [ ] For v3, the scorer has only been validated against authored answers. Label a sample of live answers by hand and record its agreement with the scorer (true and false positive rates) before quoting completion figures.
+- [ ] For v3, the scorer has only been validated against authored answers. Before quoting completion figures, run `pnpm scorer-audit:sample --raw <raw.jsonl> --config config/full.v3.json`, give the labeler only the `to-label` folder (keep the `key` folder away from them), then run `pnpm scorer-audit:score --key <dir>/key/key.json --labels <filled template> --output <dir>` and quote the false pass and false fail rates beside the completion figures.
 
 Artifact review:
 
