@@ -345,7 +345,10 @@ async function runOne(
     costUsd: result.usage.costUsd + routing.costUsd,
     tokens: result.usage.tokens + routing.tokens,
     modelIds: [...(routing.modelId ? [routing.modelId] : []), ...result.modelIds],
+    // Every bounded run counts as a policy violation; recovery and report completeness rely on this.
     policyViolation: result.outcome === "bounded",
+    ...(result.terminationReason === undefined ? {} : { terminationReason: result.terminationReason }),
+    ...(result.refusalCategory === undefined ? {} : { refusalCategory: result.refusalCategory }),
     duplicateMutation: pack.hasDuplicateMutation(result.finalState),
     ...(routing.domain === undefined ? {} : { routedDomain: routing.domain, tier: routing.tier }),
   };

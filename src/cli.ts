@@ -29,6 +29,7 @@ import { loadPricingConfig } from "./pricing.js";
 import { createProviderFromEnvironment } from "./providers/factory.js";
 import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
+import { currentScoringContract, SCORING_CONTRACT_LOCK_PATH, writeScoringContractLock } from "./scoring-contract.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
 
 export async function main(argv: readonly string[]): Promise<void> {
@@ -76,6 +77,17 @@ export async function main(argv: readonly string[]): Promise<void> {
   }
   if (parsed.command === "suspension-demo") {
     for (const line of await runSuspensionDemo(parsed.logPath ?? "runs/demo/audit.jsonl")) process.stdout.write(`${line}\n`);
+    return;
+  }
+  if (parsed.command === "scoring-contract") {
+    if (parsed.write) {
+      const lock = await writeScoringContractLock(parsed.rationale);
+      process.stdout.write(`Wrote ${SCORING_CONTRACT_LOCK_PATH}: ${lock.version} ${lock.sha256}\n`);
+      return;
+    }
+    const contract = await currentScoringContract();
+    process.stdout.write(`Scoring contract ${contract.version} ${contract.sha256 ?? "not available"}; lock ${contract.lockedSha256 ?? "missing"}; ${contract.matchesLock ? "matches" : "DOES NOT MATCH"}\n`);
+    process.exitCode = contract.matchesLock ? 0 : 1;
     return;
   }
   if (parsed.command === "mock-run") {

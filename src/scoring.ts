@@ -1,5 +1,12 @@
+import type { TerminationReason } from "./contracts.js";
 import { isV3Case, type AssertionTermV3, type DatasetCase, type DatasetCaseV2, type DatasetCaseV3 } from "./dataset.js";
 import { claimSupportedEs, containsAffirmedEs, containsAmount, containsIdentifier } from "./text-es.js";
+
+/**
+ * Version of the scoring contract: this file, src/text-es.ts, src/gate/severity.ts, and src/dataset.ts. Any change to how a raw
+ * row is scored needs a new version and a regenerated config/scoring-contract.json; a test fails otherwise.
+ */
+export const SCORING_CONTRACT_VERSION = "scoring-contract-v1";
 
 export interface EvidenceClaim { text: string; evidenceIds: readonly string[]; checkable?: boolean }
 export interface ScoredToolCall { name: string; input: unknown; evidenceId?: string; success?: boolean }
@@ -21,6 +28,10 @@ export interface RawRun {
   modelIds?: readonly string[];
   policyViolation?: boolean;
   duplicateMutation?: boolean;
+  /** Why a `bounded` or `failed` run ended. Absent on finished runs and on rows recorded before the field existed. */
+  terminationReason?: TerminationReason;
+  /** Provider refusal category, when a refusal gave one. */
+  refusalCategory?: string;
   /** Domain-routed arms only: the router's domain label and the executor tier it selected. */
   routedDomain?: string;
   tier?: "standard" | "advanced";

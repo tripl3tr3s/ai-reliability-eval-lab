@@ -190,4 +190,21 @@ describe("experiment orchestration", () => {
     const lookup = runs.find(({ caseId }) => caseId === "v2-lookup-document-01");
     expect(lookup?.evidenceFacts?.["v2-lookup-document-01:get_document:1"]).toContain("result.total 1160");
   });
+  it("writes the termination reason and refusal category into the raw row", async () => {
+    const adapter = (stopReason: string, refusalCategory?: string): ModelAdapter => ({
+      async generate(request) {
+        return { text: "", toolCalls: [], stopReason, usage: { inputTokens: 1, outputTokens: 1, costUsd: 0.000001 }, modelId: request.model, latencyMs: 1, ...(refusalCategory === undefined ? {} : { refusalCategory }) };
+      },
+    });
+    const config = await loadExperimentConfig("config/smoke.v2.json");
+    const single = { ...config, configurations: ["direct-sonnet"] as const, repeats: 1 };
+    const outputPath = join(await mkdtemp(join(tmpdir(), "reliability-lab-")), "results.jsonl");
+    const [bounded] = await runExperiment({ config: single, adapter: adapter("max_tokens"), outputPath });
+    expect(bounded).toMatchObject({ outcome: "bounded", terminationReason: "output_limit", policyViolation: true });
+    expect(bounded).not.toHaveProperty("refusalCategory");
+    const [refused] = await runExperiment({ config: single, adapter: adapter("refusal", "cyber"), outputPath: join(await mkdtemp(join(tmpdir(), "reliability-lab-")), "results.jsonl") });
+    expect(refused).toMatchObject({ outcome: "failed", terminationReason: "refusal", refusalCategory: "cyber", policyViolation: false });
+    const written = JSON.parse((await readFile(outputPath, "utf8")).split("\n")[0]!) as Record<string, unknown>;
+    expect(written.terminationReason).toBe("output_limit");
+  });
 });
