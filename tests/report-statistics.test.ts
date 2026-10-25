@@ -5,9 +5,9 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadDataset } from "../src/dataset.js";
 import { parseRawRuns, readRawRuns } from "../src/raw-run.js";
 import { generateReport, runTimestamps, UNKNOWN_TIMESTAMP } from "../src/report-command.js";
-import { buildReport, type RunManifest } from "../src/report.js";
+import { buildReport, UNLOCKED_SCORING_REASON, type RunManifest } from "../src/report.js";
 import { caseTallies, computeRunStatistics, statisticsSections } from "../src/report-statistics.js";
-import { scoreRun } from "../src/scoring.js";
+import { SCORING_CONTRACT_VERSION, scoreRun } from "../src/scoring.js";
 import { wilsonInterval } from "../src/stats/index.js";
 import { ARMS, syntheticGrid, syntheticRun, toJsonl } from "./helpers/synthetic.js";
 
@@ -164,7 +164,26 @@ describe("report command", () => {
       expect(await readFile(join(root, "second", file), "utf8")).toBe(await readFile(join(root, "first", file), "utf8"));
     }
     expect(summary.manifest).toMatchObject({ startedAt: "2026-09-01T08:17:00.000Z", completedAt: "2026-09-01T09:02:00.000Z", commitSha: "local", datasetHash: dataset.hash });
+    expect(summary.manifest.scoringContract).toMatchObject({ version: SCORING_CONTRACT_VERSION, matchesLock: true });
     expect(summary.status).toBe("complete");
+    expect(await readFile(join(root, "first", "report.md"), "utf8")).toContain(`Scoring contract: ${SCORING_CONTRACT_VERSION}, sha256 ${summary.manifest.scoringContract!.sha256}, matches the committed lock`);
+  });
+
+  it("keeps a complete run pending when the scoring code does not match its lock", async () => {
+    const root = await mkdtemp(join(tmpdir(), "eval-report-"));
+    const raw = join(root, "raw.jsonl");
+    await writeFile(raw, toJsonl(syntheticGrid(dataset.cases)));
+    const scoringContract = { version: SCORING_CONTRACT_VERSION, sha256: "a".repeat(64), lockedSha256: "b".repeat(64), matchesLock: false };
+    const summary = await generateReport({ rawPath: raw, configPath: "config/full.v2.json", outputDirectory: join(root, "out"), environment: {}, scoringContract });
+    expect(summary.status).toBe("pending");
+    expect(summary.reason).toBe(UNLOCKED_SCORING_REASON);
+    expect(await readFile(join(root, "out", "index.html"), "utf8")).toContain("DOES NOT MATCH the committed lock");
+  });
+
+  it("renders a manifest written before the scoring contract was recorded", () => {
+    const report = buildReport([], dataset.cases, manifest);
+    expect(report.summary.manifest.scoringContract).toBeUndefined();
+    expect(report.markdown).toContain("Scoring contract: not recorded.");
   });
 
   it("marks timestamps unknown without telemetry instead of using the clock", async () => {

@@ -1,0 +1,11 @@
+{
+  "version": "scoring-contract-v1",
+  "files": [
+    "src/scoring.ts",
+    "src/text-es.ts",
+    "src/gate/severity.ts",
+    "src/dataset.ts"
+  ],
+  "sha256": "0969538289395782391c5ca2a8af7fb9953e5239d984420a15449371418e0158",
+  "rationale": "First recorded scoring contract: the v1, v2 and v3 scorer, Spanish matchers, severity-rules-v2 and dataset schema defaults as of the dataset v3 default (d0e9d40), before any live v3 run."
+}

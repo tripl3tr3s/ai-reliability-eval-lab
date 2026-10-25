@@ -3,6 +3,7 @@ import { join } from "node:path";
 import type { DatasetCase } from "./dataset.js";
 import { containsMockRuns } from "./raw-run.js";
 import { computeRunStatistics, statisticsSections, type ReportSection, type RunStatistics } from "./report-statistics.js";
+import type { ScoringContract } from "./scoring-contract.js";
 import { aggregateScores, scoreRun, type ConfigurationSummary, type RawRun, type RunScore } from "./scoring.js";
 
 export interface RunManifest {
@@ -21,6 +22,8 @@ export interface RunManifest {
   startedAt: string;
   completedAt: string;
   rawResultReferences: readonly string[];
+  /** Scoring contract that produced the scores. Absent in manifests written before it was recorded. */
+  scoringContract?: ScoringContract;
 }
 
 export interface ReportSummary {
@@ -61,6 +64,12 @@ export const LEGACY_REPORT_CONFIGURATIONS = ["direct-sonnet", "routed", "no-reso
 const NUMBER_WORDS = ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"] as const;
 const countWord = (count: number): string => NUMBER_WORDS[count] ?? String(count);
 
+const scoringContractText = (contract: ScoringContract | undefined): string => contract === undefined
+  ? "not recorded"
+  : `${contract.version}, sha256 ${contract.sha256 ?? "not available"}${contract.matchesLock ? ", matches the committed lock" : ", DOES NOT MATCH the committed lock"}`;
+
+export const UNLOCKED_SCORING_REASON = "The scoring code does not match the committed scoring contract lock (config/scoring-contract.json), so these scores are not reproducible from a reviewed contract.";
+
 export function pendingReason(caseCount: number, configurationCount: number): string {
   return `Pending a complete ${caseCount}-case, ${countWord(configurationCount)}-configuration, five-repeat experiment.`;
 }
@@ -85,9 +94,10 @@ export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase
   });
   const complete = experimentIsComplete(runs, cases, configurations, manifest.repeatCount);
   const mock = containsMockRuns([...manifest.models, ...runs.flatMap(({ modelIds }) => modelIds ?? [])]);
+  const unlocked = manifest.scoringContract !== undefined && !manifest.scoringContract.matchesLock;
   const summary: ReportSummary = {
-    status: complete && !mock ? "complete" : "pending",
-    reason: mock ? MOCK_REASON : complete ? null : pendingReason(cases.length, configurations.length),
+    status: complete && !mock && !unlocked ? "complete" : "pending",
+    reason: mock ? MOCK_REASON : !complete ? pendingReason(cases.length, configurations.length) : unlocked ? UNLOCKED_SCORING_REASON : null,
     manifest,
     configurations: aggregateScores(scores, manifest.seed),
     statistics: computeRunStatistics(scores, runs, manifest.seed),
@@ -95,10 +105,10 @@ export function buildReport(runs: readonly RawRun[], cases: readonly DatasetCase
   const sections = statisticsSections(summary.statistics);
   const rows = summary.configurations.map((item) => `| ${item.configuration} | ${percent(item.completion.value)} (${item.completion.numerator}/${item.completion.denominator}) | ${percent(item.headlineToolAccuracy.value)} (${item.headlineToolAccuracy.numerator}/${item.headlineToolAccuracy.denominator}) | ${percent(item.recovery.value)} (${item.recovery.numerator}/${item.recovery.denominator}) | $${number(item.costPerSuccessfulTask.value, 4)} | ${number(item.p95LatencyMs.value, 0)} ms |`).join("\n");
   const details = summary.configurations.map((item) => `### ${item.configuration}\n\n- Completion 95% CI: ${ci(item.completion)}\n- Tool selection: ${percent(item.toolSelection.value)} (${item.toolSelection.numerator}/${item.toolSelection.denominator}), 95% CI ${ci(item.toolSelection)}\n- Argument accuracy: ${percent(item.argumentAccuracy.value)} (${item.argumentAccuracy.numerator}/${item.argumentAccuracy.denominator}), 95% CI ${ci(item.argumentAccuracy)}\n- Unsupported claims: ${percent(item.unsupportedClaimRate.value)} (${item.unsupportedClaimRate.numerator}/${item.unsupportedClaimRate.denominator}), 95% CI ${ci(item.unsupportedClaimRate)}\n- Cost per successful task 95% CI: ${ci(item.costPerSuccessfulTask, (value) => `$${value.toFixed(4)}`)}\n- p95 latency 95% CI: ${ci(item.p95LatencyMs, (value) => `${value.toFixed(0)} ms`)}\n- Case results: results.jsonl\n- Run manifest: summary.json`).join("\n\n");
-  const markdown = `# AI Reliability Evaluation Lab\n\n**Status: ${summary.status.toUpperCase()}**${summary.reason ? ` - ${summary.reason}` : ""}\n\n| Configuration | Completion | Tool accuracy | Recovery | Cost/task | p95 latency |\n|---|---:|---:|---:|---:|---:|\n${rows || "| No completed runs | N/A | N/A | N/A | N/A | N/A |"}\n\n## Detailed metrics\n\n${details ? `${ROW_LEVEL_NOTE}\n\n${details}` : "No run results are available."}\n${sections.map((section) => `\n${sectionMarkdown(section)}\n`).join("")}`;
+  const markdown = `# AI Reliability Evaluation Lab\n\n**Status: ${summary.status.toUpperCase()}**${summary.reason ? ` - ${summary.reason}` : ""}\n\n| Configuration | Completion | Tool accuracy | Recovery | Cost/task | p95 latency |\n|---|---:|---:|---:|---:|---:|\n${rows || "| No completed runs | N/A | N/A | N/A | N/A | N/A |"}\n\n## Detailed metrics\n\n${details ? `${ROW_LEVEL_NOTE}\n\n${details}` : "No run results are available."}\n${sections.map((section) => `\n${sectionMarkdown(section)}\n`).join("")}\n## Reproducibility\n\nDataset hash: \`${manifest.datasetHash}\`. Commit: \`${manifest.commitSha}\`. Scoring contract: ${scoringContractText(manifest.scoringContract)}.\n`;
   const embedded = escapeHtml(JSON.stringify(summary));
   const htmlRows = summary.configurations.map((item) => `<tr><th scope="row">${escapeHtml(item.configuration)}</th><td>${percent(item.completion.value)} (${item.completion.numerator}/${item.completion.denominator})</td><td>${percent(item.headlineToolAccuracy.value)} (${item.headlineToolAccuracy.numerator}/${item.headlineToolAccuracy.denominator})</td><td>${percent(item.recovery.value)} (${item.recovery.numerator}/${item.recovery.denominator})</td><td>$${number(item.costPerSuccessfulTask.value, 4)}</td><td>${number(item.p95LatencyMs.value, 0)} ms</td></tr>`).join("");
-  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Reliability Evaluation Lab</title><style>body{font:16px system-ui;line-height:1.5;max-width:72rem;margin:auto;padding:2rem;color:#18202a}table{border-collapse:collapse;width:100%;margin:1rem 0}caption{text-align:left;font-weight:600;padding:.4rem 0}th,td{border:1px solid #98a2b3;padding:.6rem;text-align:right}th:first-child{text-align:left}.pending{padding:1rem;border:2px solid #a15c00;background:#fff8e6}code{word-break:break-all}@media(max-width:700px){body{padding:1rem;overflow-x:auto}}</style></head><body><main><h1>AI Reliability Evaluation Lab</h1><p class="${summary.status === "pending" ? "pending" : ""}" role="status"><strong>Status: ${summary.status.toUpperCase()}</strong>${summary.reason ? ` - ${escapeHtml(summary.reason)}` : ""}</p><table><caption>Headline benchmark metrics with scored denominators</caption><thead><tr><th scope="col">Configuration</th><th scope="col">Completion</th><th scope="col">Tool accuracy</th><th scope="col">Recovery</th><th scope="col">Cost/task</th><th scope="col">p95 latency</th></tr></thead><tbody>${htmlRows || '<tr><td colspan="6">No completed runs</td></tr>'}</tbody></table>${sections.map(sectionHtml).join("")}<h2>Reproducibility</h2><p>Dataset hash: <code>${escapeHtml(manifest.datasetHash)}</code>. Commit: <code>${escapeHtml(manifest.commitSha)}</code>. Detailed case results are in <a href="results.jsonl">results.jsonl</a> and the run manifest is in <a href="summary.json">summary.json</a>.</p></main><script type="application/json" id="report-data">${embedded}</script></body></html>`;
+  const html = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>AI Reliability Evaluation Lab</title><style>body{font:16px system-ui;line-height:1.5;max-width:72rem;margin:auto;padding:2rem;color:#18202a}table{border-collapse:collapse;width:100%;margin:1rem 0}caption{text-align:left;font-weight:600;padding:.4rem 0}th,td{border:1px solid #98a2b3;padding:.6rem;text-align:right}th:first-child{text-align:left}.pending{padding:1rem;border:2px solid #a15c00;background:#fff8e6}code{word-break:break-all}@media(max-width:700px){body{padding:1rem;overflow-x:auto}}</style></head><body><main><h1>AI Reliability Evaluation Lab</h1><p class="${summary.status === "pending" ? "pending" : ""}" role="status"><strong>Status: ${summary.status.toUpperCase()}</strong>${summary.reason ? ` - ${escapeHtml(summary.reason)}` : ""}</p><table><caption>Headline benchmark metrics with scored denominators</caption><thead><tr><th scope="col">Configuration</th><th scope="col">Completion</th><th scope="col">Tool accuracy</th><th scope="col">Recovery</th><th scope="col">Cost/task</th><th scope="col">p95 latency</th></tr></thead><tbody>${htmlRows || '<tr><td colspan="6">No completed runs</td></tr>'}</tbody></table>${sections.map(sectionHtml).join("")}<h2>Reproducibility</h2><p>Dataset hash: <code>${escapeHtml(manifest.datasetHash)}</code>. Commit: <code>${escapeHtml(manifest.commitSha)}</code>. Scoring contract: ${escapeHtml(scoringContractText(manifest.scoringContract))}. Detailed case results are in <a href="results.jsonl">results.jsonl</a> and the run manifest is in <a href="summary.json">summary.json</a>.</p></main><script type="application/json" id="report-data">${embedded}</script></body></html>`;
   return { summary, scores, markdown, html };
 }
 

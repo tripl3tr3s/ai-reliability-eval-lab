@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
-export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo>";
+export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo|scoring-contract>";
 
 const ProgressModeSchema = z.enum(["auto", "plain", "quiet"]);
 export type ProgressMode = z.infer<typeof ProgressModeSchema>;
@@ -97,6 +97,8 @@ export type CliArguments =
     }
   | { readonly command: "audit-verify"; readonly logPath: string; readonly expectedHeadHash?: string }
   | { readonly command: "suspension-demo"; readonly logPath?: string }
+  | { readonly command: "scoring-contract"; readonly write: false }
+  | { readonly command: "scoring-contract"; readonly write: true; readonly rationale: string }
   | {
       readonly command: "mock-run";
       readonly configPath?: string;
@@ -232,6 +234,16 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
     const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { log: { type: "string" } } });
     const parsed = z.object({ log: CliPathSchema.optional() }).strict().parse(values);
     return { command, ...(parsed.log === undefined ? {} : { logPath: parsed.log }) };
+  }
+  if (command === "scoring-contract") {
+    const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { write: { type: "boolean", default: false }, rationale: { type: "string" } } });
+    const parsed = z.object({ write: z.boolean(), rationale: z.string().trim().min(20).max(1_000).optional() }).strict().parse(values);
+    if (!parsed.write) {
+      if (parsed.rationale !== undefined) throw new Error("--rationale is only used with --write");
+      return { command, write: false };
+    }
+    if (parsed.rationale === undefined) throw new Error("--write needs --rationale explaining why the scoring contract changed");
+    return { command, write: true, rationale: parsed.rationale };
   }
   if (command === "mock-run") {
     const { values } = parseArgs({

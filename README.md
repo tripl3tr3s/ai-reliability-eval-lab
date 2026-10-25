@@ -24,7 +24,7 @@ Why v3 replaced v2 as the target (5.5 lineup, Spanish prompts, sat-mcp-shaped to
 
 - **v3 arms** pin `claude-haiku-5-5`, `claude-sonnet-5-5`, and `claude-opus-5-5` with adaptive thinking and an explicit effort on every call, because the API defaults differ by model. Assistant blocks, thinking included, are replayed verbatim with tool results. Refusals end the run with their category; no server-side fallback model is enabled, so every row is attributable to the model under test. Runs are bounded by `V3_AGENT_POLICY` in `src/config.ts` (150 000 tokens and 180 s per run, starting values for the smoke run to calibrate). Prices come from `config/pricing.v2.json` (version `anthropic-2026-10-13-5-5-lineup`).
 - **v2 arms** pin `claude-sonnet-5` and `claude-haiku-4-5-20251001`. Sonnet 5 requests omit `temperature` so adaptive-thinking defaults stay valid, and the adapter rejects a defined Sonnet temperature before sending. Haiku keeps `temperature: 0`. Sonnet 5 gets 8 192 output tokens per call inside a 12 000-token run ceiling. Prices come from `config/pricing.v1.json` (version `anthropic-2026-08-10-sonnet-5`).
-- In both, a provider `max_tokens` stop is recorded as a `bounded` outcome, never repaired or treated as malformed output, and cost is computed from the versioned pricing file, never from adapter constants. Pricing files are checked against [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing) before every live run.
+- In both, a provider `max_tokens` stop is recorded as a `bounded` outcome, never repaired or treated as malformed output; every `bounded` or `failed` row records a `terminationReason`, and cost is computed from the versioned pricing file, never from adapter constants. Pricing files are checked against [Anthropic's pricing page](https://platform.claude.com/docs/en/about-claude/pricing) before every live run.
 
 ## Documentation map
 
@@ -117,7 +117,7 @@ Raw runs and append-only telemetry are written locally. Provider request IDs, AP
 
 ## Reproducibility
 
-Published output records the commit, dataset and configuration hashes, prompt and resource versions, exact provider-returned model identifiers, repeat count, seed, Node and lockfile versions, pricing version and effective date, timestamps, token usage, and raw-result references. Dataset versions are immutable after baseline release. Corrections require a new version and manifest hash.
+Published output records the commit, dataset and configuration hashes, the scoring contract version and hash (`config/scoring-contract.json`; a report from a scorer that does not match the lock stays `pending`), prompt and resource versions, exact provider-returned model identifiers, repeat count, seed, Node and lockfile versions, pricing version and effective date, timestamps, token usage, and raw-result references. Dataset versions are immutable after baseline release. Corrections require a new version and manifest hash.
 
 `pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values. The same raw JSONL always produces byte-identical files: run timestamps come from the telemetry events passed with `--events`, never from the wall clock.
 

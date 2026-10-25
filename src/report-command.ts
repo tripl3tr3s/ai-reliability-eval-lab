@@ -5,6 +5,7 @@ import { loadExperimentConfig } from "./experiment.js";
 import { loadPricingConfig } from "./pricing.js";
 import { readRawRuns } from "./raw-run.js";
 import { writeReport, type ReportSummary, type RunManifest } from "./report.js";
+import { currentScoringContract, type ScoringContract } from "./scoring-contract.js";
 
 export const UNKNOWN_TIMESTAMP = "unknown";
 
@@ -32,6 +33,8 @@ export interface GenerateReportInput {
   readonly eventsPath?: string;
   readonly environment?: Readonly<Record<string, string | undefined>>;
   readonly nodeVersion?: string;
+  /** Overrides the scoring contract read from this checkout. Tests use it to simulate an unlocked scorer. */
+  readonly scoringContract?: ScoringContract;
 }
 
 export async function generateReport(input: GenerateReportInput): Promise<ReportSummary> {
@@ -55,6 +58,7 @@ export async function generateReport(input: GenerateReportInput): Promise<Report
     pricingEffectiveDate: pricing.effectiveDate,
     ...runTimestamps(eventsText),
     rawResultReferences: [input.rawPath],
+    scoringContract: input.scoringContract ?? await currentScoringContract(),
   };
   return writeReport(input.outputDirectory, runs, dataset.cases, manifest, config.configurations);
 }

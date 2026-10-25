@@ -8,6 +8,7 @@ import { renderGateMarkdown, type GateReport } from "./gate/render.js";
 import { parseThresholds } from "./gate/thresholds.js";
 import { containsMockRuns, parseRawRuns } from "./raw-run.js";
 import { packForDatasetVersion, writeToolNames } from "./packs/index.js";
+import { currentScoringContract, SCORING_CONTRACT_LOCK_PATH, type ScoringContract } from "./scoring-contract.js";
 
 export interface GateCommandInput {
   readonly rawPath: string;
@@ -23,6 +24,8 @@ export interface GateCommandInput {
   /** Append-only audit log that receives one entry per gate decision. */
   readonly auditLogPath?: string;
   readonly now?: () => Date;
+  /** Overrides the scoring contract read from this checkout. Tests use it to simulate an unlocked scorer. */
+  readonly scoringContract?: ScoringContract;
 }
 
 /** Reads a file once and hashes its bytes, so the recorded sha256 matches `sha256sum` even for input that is not valid UTF-8. */
@@ -71,8 +74,12 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
     datasetIntegrityVerified: true,
   });
   const modelIds = [...raw.runs, ...(baseline?.runs ?? [])].flatMap((run) => run.modelIds ?? []);
+  const scoringContract = input.scoringContract ?? await currentScoringContract();
   const report: GateReport = {
     ...result,
+    warnings: scoringContract.matchesLock
+      ? result.warnings
+      : [...result.warnings, `The scoring code does not match ${SCORING_CONTRACT_LOCK_PATH}, so this decision cannot be tied to a reviewed scoring contract.`],
     dataSource: containsMockRuns(modelIds) ? "mock" : "provider",
     inputs: {
       raw: { path: input.rawPath, sha256: rawFile.sha256 },
@@ -80,6 +87,7 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
       dataset: { version: dataset.version, sha256: dataset.hash },
       thresholds: { path: input.thresholdsPath, sha256: thresholdsFile.sha256 },
       config: { path: input.configPath, sha256: configFile.sha256 },
+      scoringContract,
     },
   };
   const markdown = renderGateMarkdown(report);
@@ -100,6 +108,7 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
         thresholds: report.inputs.thresholds.sha256,
         config: report.inputs.config.sha256,
         ...(report.inputs.baseline ? { baseline: report.inputs.baseline.sha256 } : {}),
+        ...(scoringContract.sha256 === null ? {} : { scoringContract: scoringContract.sha256 }),
       },
       details: {
         decision: report.decision,
@@ -107,6 +116,8 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
         candidate: report.candidate.configuration,
         reference: report.reference.configuration,
         severityRulesVersion: report.severityRulesVersion,
+        scoringContractVersion: scoringContract.version,
+        scoringContractMatchesLock: scoringContract.matchesLock,
         dataSource: report.dataSource,
         reasons: report.reasons,
       },

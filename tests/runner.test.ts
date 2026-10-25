@@ -139,3 +139,52 @@ describe('bounded runner', () => {
     await expect(runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: [], policy: { ...DEFAULT_AGENT_POLICY, allowedTools: [] } })).rejects.toThrow('529 overloaded');
   });
 });
+
+describe('termination reasons', () => {
+  const final = response({ text: JSON.stringify({ outcome: 'completed', answer: 'Done', claims: [] }) });
+  const lookup = response({ toolCalls: [{ id: '1', name: 'get_document', input: { documentId: 'INV-001' } }] });
+  const run = (replies: readonly ModelResponse[], policy: Partial<typeof DEFAULT_AGENT_POLICY> = {}, signal?: AbortSignal) => {
+    const queue = [...replies];
+    const adapter: ModelAdapter = { async generate() { return queue.length > 1 ? queue.shift()! : queue[0]!; } };
+    return runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter, tools: createSyntheticTools(), policy: { ...DEFAULT_AGENT_POLICY, allowedTools: ['get_document'], ...policy }, ...(signal ? { signal } : {}) });
+  };
+
+  it.each([
+    ['output_limit', [response({ stopReason: 'max_tokens', text: 'cut' })], {}, 'bounded'],
+    ['token_ceiling', [response({ usage: { inputTokens: 50, outputTokens: 50, costUsd: 0 } })], { maxTokens: 10 }, 'bounded'],
+    ['cost_ceiling', [response({ usage: { inputTokens: 1, outputTokens: 1, costUsd: 2 } })], { maxCostUsd: 1 }, 'bounded'],
+    ['output_size', [response({ text: 'x'.repeat(10) })], { maxOutputBytes: 5 }, 'bounded'],
+    ['tool_call_ceiling', [lookup], { maxToolCalls: 0 }, 'bounded'],
+    ['tool_not_allowed', [response({ toolCalls: [{ id: '1', name: 'cancel_invoice', input: {} }] })], {}, 'bounded'],
+    ['iteration_ceiling', [lookup], { maxIterations: 1 }, 'bounded'],
+    ['invalid_final_result', [response({ text: 'not json' })], {}, 'error'],
+  ] as const)('records %s', async (reason, replies, policy, outcome) => {
+    const result = await run(replies, policy);
+    expect(result.outcome).toBe(outcome);
+    expect(result.terminationReason).toBe(reason);
+    expect(result.refusalCategory).toBeUndefined();
+  });
+
+  it('records a refusal with its category, and without one when the provider gives none', async () => {
+    const withCategory = await run([response({ stopReason: 'refusal', refusalCategory: 'cyber' })]);
+    expect(withCategory).toMatchObject({ outcome: 'error', terminationReason: 'refusal', refusalCategory: 'cyber' });
+    const withoutCategory = await run([response({ stopReason: 'refusal', refusalCategory: null })]);
+    expect(withoutCategory).toMatchObject({ outcome: 'error', terminationReason: 'refusal' });
+    expect(withoutCategory).not.toHaveProperty('refusalCategory');
+  });
+
+  it('separates a parent cancellation before the first call from the agent deadline', async () => {
+    const controller = new AbortController();
+    controller.abort(new Error('cancelled before start'));
+    expect((await run([final], {}, controller.signal)).terminationReason).toBe('cancelled');
+    const slow: ModelAdapter = { async generate(request) { return new Promise<never>((_resolve, reject) => request.signal?.addEventListener('abort', () => reject(new Error('Request was aborted.')), { once: true })); } };
+    const deadline = await runAgent({ caseId: 'case', seed: 1, prompt: 'x', systemPrompt: 'x', model: 'm', adapter: slow, tools: [], policy: { ...DEFAULT_AGENT_POLICY, deadlineMs: 20, allowedTools: [] } });
+    expect(deadline).toMatchObject({ outcome: 'bounded', terminationReason: 'deadline' });
+  });
+
+  it('leaves the reason unset when the run finishes', async () => {
+    const result = await run([lookup, final]);
+    expect(result.outcome).toBe('completed');
+    expect(result).not.toHaveProperty('terminationReason');
+  });
+});
