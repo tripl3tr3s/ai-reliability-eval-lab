@@ -3,7 +3,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { parseArgs } from "node:util";
 import { z } from "zod";
 
-export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo|scoring-contract>";
+export const CLI_USAGE = "Usage: reliability-lab <validate-dataset|validate-config|run|report|gate|mock-run|audit-verify|suspension-demo|scoring-contract|report-check>";
 
 const ProgressModeSchema = z.enum(["auto", "plain", "quiet"]);
 export type ProgressMode = z.infer<typeof ProgressModeSchema>;
@@ -99,6 +99,7 @@ export type CliArguments =
   | { readonly command: "suspension-demo"; readonly logPath?: string }
   | { readonly command: "scoring-contract"; readonly write: false }
   | { readonly command: "scoring-contract"; readonly write: true; readonly rationale: string }
+  | { readonly command: "report-check"; readonly summaryPath: string }
   | {
       readonly command: "mock-run";
       readonly configPath?: string;
@@ -244,6 +245,11 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
     }
     if (parsed.rationale === undefined) throw new Error("--write needs --rationale explaining why the scoring contract changed");
     return { command, write: true, rationale: parsed.rationale };
+  }
+  if (command === "report-check") {
+    const { values } = parseArgs({ args: arguments_, allowPositionals: false, strict: true, options: { summary: { type: "string" } } });
+    const parsed = z.object({ summary: CliPathSchema }).strict().parse(values);
+    return { command, summaryPath: parsed.summary };
   }
   if (command === "mock-run") {
     const { values } = parseArgs({

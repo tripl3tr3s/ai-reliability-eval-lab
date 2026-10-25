@@ -85,6 +85,8 @@ describe("CLI argument parsing", () => {
     expect(() => parseCliArguments(["audit-verify", "--log", "x", "--head", "short"])).toThrow(/sha256/u);
     expect(parseCliArguments(["suspension-demo"])).toEqual({ command: "suspension-demo" });
     expect(parseCliArguments(["scoring-contract"])).toEqual({ command: "scoring-contract", write: false });
+    expect(parseCliArguments(["report-check", "--summary", "reports/generated/x/summary.json"])).toEqual({ command: "report-check", summaryPath: "reports/generated/x/summary.json" });
+    expect(() => parseCliArguments(["report-check"])).toThrow();
     expect(parseCliArguments(["scoring-contract", "--write", "--rationale", "Scorer changed to fix a negation bug."])).toEqual({ command: "scoring-contract", write: true, rationale: "Scorer changed to fix a negation bug." });
     expect(() => parseCliArguments(["scoring-contract", "--write"])).toThrow(/--rationale/u);
     expect(() => parseCliArguments(["scoring-contract", "--write", "--rationale", "short"])).toThrow();

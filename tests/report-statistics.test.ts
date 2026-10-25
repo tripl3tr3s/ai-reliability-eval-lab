@@ -120,7 +120,7 @@ describe("report output", () => {
 
   it("adds the case-level sections to Markdown, HTML and the summary", () => {
     const report = buildReport(runs, dataset.cases, manifest);
-    for (const title of ["Reliability by case", "Cost and tokens", "Paired comparisons", "What this run can and cannot detect"]) {
+    for (const title of ["Legacy: pooled pass rates with bootstrap intervals", "Cost and tokens", "Legacy: paired bootstrap comparisons", "What this run can and cannot detect"]) {
       expect(report.markdown).toContain(`## ${title}`);
       expect(report.html).toContain(`<h2>${title}</h2>`);
     }

@@ -1,5 +1,6 @@
 export * from "./binomial.js";
 export * from "./bootstrap.js";
+export * from "./continuous.js";
 export * from "./methods.js";
 export * from "./multiplicity.js";
 export * from "./paired.js";
