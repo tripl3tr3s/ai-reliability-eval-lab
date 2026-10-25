@@ -8,6 +8,8 @@ No complete live benchmark run exists yet. Nothing in this entry is a benchmark 
 
 ### Added
 
+- Scoring contract lock (`config/scoring-contract.json`, `pnpm scoring-contract`): the sha256 of `src/scoring.ts`, `src/text-es.ts`, `src/gate/severity.ts`, and `src/dataset.ts` is recorded in `summary.json`, `gate.json`, and the gate's audit log entry. A test fails when the scorer changes without a new `SCORING_CONTRACT_VERSION`, and a report from an unlocked scorer stays `pending`. See [the decision record](docs/decisions/2026-10-24-scoring-contract-lock-and-termination-reasons.md).
+- `terminationReason` and `refusalCategory` on raw run rows, so `bounded` and `failed` runs say why they stopped (deadline, cancellation, output limit, token, cost, output size, tool call, or iteration ceiling, disallowed tool, invalid final result, refusal). Optional; older rows remain valid.
 - Dataset v3 (`datasets/v3`): 90 Mexican Spanish cases (20 lookup, 24 multi-tool, 18 recovery, 14 abstention, 14 confirmation) authored in `src/packs/sat-v3/dataset` and built with `pnpm dataset:build:v3`. Each case has a reference answer and counterexamples, all checked by tests. See [the decision record](docs/decisions/2026-10-14-dataset-v3-and-5-5-arms.md).
 - The sat-v3 domain pack: 17 synthetic tools named and shaped after the sat-mcp tools DISAI_Conta allowlists, with Spanish fixtures, HITL pending confirmations, and a domain router modeled on DISAI_Conta's.
 - Arms `prod-routed-5-5` (Haiku 5.5 router at low effort, Sonnet 5.5 at medium, Opus 5.5 at high for pagos and cumplimiento) and `direct-sonnet-5-5`, with `config/smoke.v3.json` and `config/full.v3.json`.
@@ -29,6 +31,8 @@ No complete live benchmark run exists yet. Nothing in this entry is a benchmark 
 
 ### Changed
 
+- Dataset v3 is the default: the CLI falls back to `config/full.v3.json` and `datasets/v3/manifest.json`, guided mode preselects Smoke v3, and the `live-smoke` and `full-benchmark` workflows (including scheduled and tag runs) default to v3. `pnpm gate:mock` and `pnpm validate` name their v2 inputs explicitly, so v2 coverage in CI is unchanged.
+- Documentation describes the current state: the README leads with status, a dataset and arms table, and a documentation map; the runbook covers v2 and v3 from one parameter table; stale lines in the architecture map, design note, decision records, and contributing guide were corrected, and the plan verification is marked as a historical record.
 - Artifact uploads in the live-smoke and full-benchmark workflows run even when the benchmark fails, so partial traces are kept. Pages publishes only from a successful run.
 - Each arm names its own model slots; legacy arms keep resolving provider roles and their requests are unchanged.
 - The tool allowlist comes from the case's domain pack (unchanged for v1 and v2).

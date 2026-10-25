@@ -60,6 +60,30 @@ export interface ModelRequest {
  */
 export const NORMALIZED_STOP_REASONS = { endTurn: "end_turn", toolUse: "tool_use", outputLimit: "max_tokens", refusal: "refusal" } as const;
 
+/**
+ * Why a run ended without a valid final result. Recorded on `bounded` and `failed` rows so the
+ * report can separate availability limits from quality failures. Absent on runs that finished,
+ * and on rows recorded before the field existed.
+ *
+ * Provider errors that are not deadlines are deliberately absent: they abort the experiment
+ * instead of producing a row (see docs/postmortems/2026-09-01-full-benchmark-deadline-abort.md),
+ * so an outage or an exhausted balance cannot be scored against whichever arm it hit.
+ */
+export const TERMINATION_REASONS = [
+  "deadline",
+  "cancelled",
+  "output_limit",
+  "token_ceiling",
+  "cost_ceiling",
+  "output_size",
+  "tool_call_ceiling",
+  "tool_not_allowed",
+  "iteration_ceiling",
+  "invalid_final_result",
+  "refusal",
+] as const;
+export type TerminationReason = (typeof TERMINATION_REASONS)[number];
+
 /** What a model accepts, declared by its adapter so the runner holds no provider rules. */
 export interface ModelCapabilities {
   readonly provider: string;
@@ -208,6 +232,10 @@ export interface AgentResult {
   readonly modelIds: readonly string[];
   readonly events: readonly RunnerEvent[];
   readonly latencyMs: number;
+  /** Set when the run ended without a valid final result. */
+  readonly terminationReason?: TerminationReason;
+  /** Provider refusal category, when the provider gave one. */
+  readonly refusalCategory?: string;
 }
 
 export interface RunnerEvent {

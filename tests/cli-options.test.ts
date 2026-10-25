@@ -84,6 +84,11 @@ describe("CLI argument parsing", () => {
     expect(() => parseCliArguments(["audit-verify"])).toThrow();
     expect(() => parseCliArguments(["audit-verify", "--log", "x", "--head", "short"])).toThrow(/sha256/u);
     expect(parseCliArguments(["suspension-demo"])).toEqual({ command: "suspension-demo" });
+    expect(parseCliArguments(["scoring-contract"])).toEqual({ command: "scoring-contract", write: false });
+    expect(parseCliArguments(["scoring-contract", "--write", "--rationale", "Scorer changed to fix a negation bug."])).toEqual({ command: "scoring-contract", write: true, rationale: "Scorer changed to fix a negation bug." });
+    expect(() => parseCliArguments(["scoring-contract", "--write"])).toThrow(/--rationale/u);
+    expect(() => parseCliArguments(["scoring-contract", "--write", "--rationale", "short"])).toThrow();
+    expect(() => parseCliArguments(["scoring-contract", "--rationale", "A rationale without the write flag."])).toThrow(/only used with --write/u);
     expect(parseCliArguments(["suspension-demo", "--log", "runs/demo.jsonl"])).toEqual({ command: "suspension-demo", logPath: "runs/demo.jsonl" });
     expect(parseCliArguments(["gate", "--audit-log", "runs/audit.jsonl"])).toEqual({ command: "gate", auditLogPath: "runs/audit.jsonl" });
   });

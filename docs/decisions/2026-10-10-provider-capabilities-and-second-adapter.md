@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Status | Accepted. Implemented on `feat/go-live-gate` (`9621417`, `27780d8`), not yet merged. The OpenAI-compatible adapter has only been run against simulated transport. |
+| Status | Accepted. Implemented in PR #1, merged as `76cc5e0` (commits `9621417`, `27780d8`). The OpenAI-compatible adapter has only been run against simulated transport. |
 | Related | [Architecture](../architecture.md), [model lineup decision](2026-10-03-model-lineup-benchmark-cost-estimates.md) |
 
 ## Context

@@ -1,5 +1,7 @@
 # Plan verification: feat/go-live-gate
 
+> **Historical record.** This snapshot was taken on 2026-10-10, before the work was merged (PR #1, `76cc5e0`). Statuses, test counts, and "missing" items below describe that moment, not the current code. For the current state see the [README](../README.md), the [architecture map](architecture.md), and the [CHANGELOG](../CHANGELOG.md).
+
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |

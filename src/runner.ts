@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import { zodToJsonSchema } from 'zod-to-json-schema';
-import type { AgentPolicy, AgentResult, Effort, ModelAdapter, NormalizedMessage, RunnerEvent, TelemetrySink, ToolDefinition, ToolEnvelope } from './contracts.js';
+import type { AgentPolicy, AgentResult, Effort, ModelAdapter, NormalizedMessage, RunnerEvent, TelemetrySink, TerminationReason, ToolDefinition, ToolEnvelope } from './contracts.js';
 import { ToolEnvelopeSchema } from './contracts.js';
 import { fiscalV2State } from './packs/fiscal-v2/state.js';
 import { NORMALIZED_STOP_REASONS } from './contracts.js';
@@ -35,8 +35,8 @@ export interface PackState {
   finalState(state: never): Readonly<Record<string, unknown>>;
 }
 
-function boundedError(message: string, finalState: AgentResult['finalState'], events: readonly RunnerEvent[], tokens: number, costUsd: number, modelIds: readonly string[], started: number): AgentResult {
-  return { outcome: 'bounded', answer: message, finalState, claims: [], usage: { tokens, costUsd }, modelIds, events, latencyMs: performance.now() - started };
+function boundedError(terminationReason: TerminationReason, message: string, finalState: AgentResult['finalState'], events: readonly RunnerEvent[], tokens: number, costUsd: number, modelIds: readonly string[], started: number): AgentResult {
+  return { outcome: 'bounded', answer: message, finalState, claims: [], usage: { tokens, costUsd }, modelIds, events, latencyMs: performance.now() - started, terminationReason };
 }
 
 export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
@@ -60,7 +60,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
   const deadline = setTimeout(() => abort.abort(new Error('Agent deadline exceeded')), input.policy.deadlineMs);
   try {
     for (let iteration = 1; iteration <= input.policy.maxIterations; iteration += 1) {
-      if (abort.signal.aborted || performance.now() - started >= input.policy.deadlineMs) return boundedError('Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
+      if (abort.signal.aborted || performance.now() - started >= input.policy.deadlineMs) return boundedError(input.signal?.aborted ? 'cancelled' : 'deadline', 'Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
       const capabilities = capabilitiesFor(input.adapter, input.model);
       const perCallOutputLimit = capabilities.maxOutputTokensPerCall;
       let response: Awaited<ReturnType<ModelAdapter['generate']>>;
@@ -72,7 +72,7 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
         if (!abort.signal.aborted) throw error;
         // Provider error messages can embed request IDs ("req_..."); telemetry must never record them.
         await emit('error', { phase: 'model', iteration, message: (error instanceof Error ? error.message : String(error)).replace(/req_[A-Za-z0-9]+/gu, 'req_[redacted]') });
-        return boundedError('Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
+        return boundedError('deadline', 'Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
       }
       tokens += response.usage.inputTokens + response.usage.outputTokens;
       costUsd += response.usage.costUsd;
@@ -80,21 +80,21 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
       await emit('model', { iteration, modelId: response.modelId, stopReason: response.stopReason, tokens, costUsd });
       if (response.stopReason === NORMALIZED_STOP_REASONS.refusal) {
         await emit('error', { phase: 'refusal', iteration, category: response.refusalCategory ?? null });
-        return { ...boundedError('Model refusal', project(), events, tokens, costUsd, modelIds, started), outcome: 'error' };
+        return { ...boundedError('refusal', 'Model refusal', project(), events, tokens, costUsd, modelIds, started), outcome: 'error', ...(response.refusalCategory ? { refusalCategory: response.refusalCategory } : {}) };
       }
-      if (response.stopReason === NORMALIZED_STOP_REASONS.outputLimit) return boundedError('Model output token limit reached', project(), events, tokens, costUsd, modelIds, started);
-      if (tokens > input.policy.maxTokens) return boundedError('Token ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
-      if (costUsd > input.policy.maxCostUsd) return boundedError('Cost ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
-      if (Buffer.byteLength(response.text) > input.policy.maxOutputBytes) return boundedError('Output size exceeded', project(), events, tokens, costUsd, modelIds, started);
+      if (response.stopReason === NORMALIZED_STOP_REASONS.outputLimit) return boundedError('output_limit', 'Model output token limit reached', project(), events, tokens, costUsd, modelIds, started);
+      if (tokens > input.policy.maxTokens) return boundedError('token_ceiling', 'Token ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
+      if (costUsd > input.policy.maxCostUsd) return boundedError('cost_ceiling', 'Cost ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
+      if (Buffer.byteLength(response.text) > input.policy.maxOutputBytes) return boundedError('output_size', 'Output size exceeded', project(), events, tokens, costUsd, modelIds, started);
       messages.push({ role: 'assistant', content: encodeAssistantTurn(response) });
       if (response.toolCalls.length > 0) {
         for (const call of response.toolCalls) {
           if (input.signal?.aborted) throw abortFailure(input.signal);
-          if (abort.signal.aborted) return boundedError('Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
+          if (abort.signal.aborted) return boundedError('deadline', 'Deadline exceeded', project(), events, tokens, costUsd, modelIds, started);
           toolCalls += 1;
-          if (toolCalls > input.policy.maxToolCalls) return boundedError('Tool call ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
+          if (toolCalls > input.policy.maxToolCalls) return boundedError('tool_call_ceiling', 'Tool call ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
           const tool = input.tools.find((candidate) => candidate.name === call.name);
-          if (!tool || !input.policy.allowedTools.includes(call.name)) return boundedError(`Tool not allowed: ${call.name}`, project(), events, tokens, costUsd, modelIds, started);
+          if (!tool || !input.policy.allowedTools.includes(call.name)) return boundedError('tool_not_allowed', `Tool not allowed: ${call.name}`, project(), events, tokens, costUsd, modelIds, started);
           const invocation = (invocations.get(call.name) ?? 0) + 1;
           invocations.set(call.name, invocation);
           const toolAbort = new AbortController();
@@ -128,12 +128,12 @@ export async function runAgent(input: RunAgentInput): Promise<AgentResult> {
           messages.push({ role: 'user', content: `The previous final result was invalid. Required correction: ${JSON.stringify(issues)}. ${FINAL_RESULT_INSTRUCTION}` });
           continue;
         }
-        return { ...boundedError('Invalid final result after repair', project(), events, tokens, costUsd, modelIds, started), outcome: 'error' };
+        return { ...boundedError('invalid_final_result', 'Invalid final result after repair', project(), events, tokens, costUsd, modelIds, started), outcome: 'error' };
       }
       await emit('complete', { outcome: parsed.data.outcome });
       return { ...parsed.data, finalState: project(), usage: { tokens, costUsd }, modelIds, events, latencyMs: performance.now() - started };
     }
-    return boundedError('Iteration ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
+    return boundedError('iteration_ceiling', 'Iteration ceiling exceeded', project(), events, tokens, costUsd, modelIds, started);
   } finally { clearTimeout(deadline); input.signal?.removeEventListener('abort', relayParentAbort); }
 }
 

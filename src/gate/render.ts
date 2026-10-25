@@ -1,3 +1,4 @@
+import type { ScoringContract } from "../scoring-contract.js";
 import type { GateResult } from "./decision.js";
 
 export interface GateInputs {
@@ -6,6 +7,8 @@ export interface GateInputs {
   readonly dataset: { readonly version: string; readonly sha256: string };
   readonly thresholds: { readonly path: string; readonly sha256: string };
   readonly config: { readonly path: string; readonly sha256: string };
+  /** Scoring code that scored both arms. */
+  readonly scoringContract: ScoringContract;
 }
 
 export interface GateReport extends GateResult {
@@ -27,6 +30,7 @@ export function renderGateMarkdown(report: GateReport): string {
     `- Candidate: ${report.candidate.configuration} from ${report.candidate.source} (${report.candidate.cases} cases, ${report.candidate.runs} runs)`,
     `- Reference: ${report.reference.configuration} from ${report.reference.source} (${report.reference.cases} cases, ${report.reference.runs} runs)`,
     `- Thresholds: ${report.thresholdsVersion} dated ${report.thresholdsDate}; severity rules ${report.severityRulesVersion}; confidence ${percent(report.confidence)}`,
+    `- Scoring contract: ${report.inputs.scoringContract.version}, sha256 ${report.inputs.scoringContract.sha256 ?? "not available"}, ${report.inputs.scoringContract.matchesLock ? "matches the committed lock" : "DOES NOT MATCH the committed lock"}`,
     "",
     "## Reasons",
     "",

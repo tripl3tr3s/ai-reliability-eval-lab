@@ -11,7 +11,8 @@ import { runMockExperiment } from "../../src/mock/run.js";
 import { createScriptedModel, SCRIPTED_MODEL_ID } from "../../src/mock/scripted-model.js";
 import { generateReport } from "../../src/report-command.js";
 import { MOCK_REASON } from "../../src/report.js";
-import { scoreRun } from "../../src/scoring.js";
+import { SCORING_CONTRACT_VERSION, scoreRun } from "../../src/scoring.js";
+import { SCORING_CONTRACT_LOCK_PATH } from "../../src/scoring-contract.js";
 
 const CONFIG = "config/full.v2.json";
 const THRESHOLDS = "config/thresholds.v1.json";
@@ -77,6 +78,21 @@ describe("gate command", () => {
     expect(markdown).toContain("**Decision: PASS** (exit code 0)");
     expect(markdown).toContain("Mock data from a scripted model");
     expect(markdown).not.toContain("—");
+    expect(report.inputs.scoringContract).toMatchObject({ version: SCORING_CONTRACT_VERSION, matchesLock: true });
+    expect(markdown).toContain(`Scoring contract: ${SCORING_CONTRACT_VERSION}, sha256 ${report.inputs.scoringContract.sha256}, matches the committed lock`);
+    expect(report.warnings.some((warning) => warning.includes("scoring code"))).toBe(false);
+  });
+
+  it("warns, and records the hash in the audit log, when the scoring code does not match its lock", async () => {
+    const auditLogPath = join(root, "unlocked-audit.jsonl");
+    const scoringContract = { version: SCORING_CONTRACT_VERSION, sha256: "a".repeat(64), lockedSha256: "b".repeat(64), matchesLock: false };
+    const { report, markdown } = await runGate({ rawPath: clean, configPath: CONFIG, thresholdsPath: THRESHOLDS, candidate: "routed", auditLogPath, scoringContract });
+    expect(report.decision).toBe("PASS");
+    expect(report.warnings).toContain(`The scoring code does not match ${SCORING_CONTRACT_LOCK_PATH}, so this decision cannot be tied to a reviewed scoring contract.`);
+    expect(markdown).toContain("DOES NOT MATCH the committed lock");
+    const entry = JSON.parse((await readFile(auditLogPath, "utf8")).trim()) as { dataHashes: Record<string, string>; details: Record<string, unknown> };
+    expect(entry.dataHashes.scoringContract).toBe("a".repeat(64));
+    expect(entry.details).toMatchObject({ scoringContractVersion: SCORING_CONTRACT_VERSION, scoringContractMatchesLock: false });
   });
 
   it("blocks the regressed arm on both critical errors and non-inferiority", async () => {
@@ -120,11 +136,11 @@ describe("gate command", () => {
 
 describe("gate exit codes as CI sees them", () => {
   it("exits 0 on a clean run, 1 on the synthetic regression, and 2 when the sample is too small", async () => {
-    const pass = await cli("gate", "--raw", clean, "--output", join(root, "cli-pass"));
+    const pass = await cli("gate", "--raw", clean, "--config", CONFIG, "--output", join(root, "cli-pass"));
     expect(pass).toMatchObject({ code: 0 });
     expect(pass.stdout).toContain("Gate PASS (mock data): routed vs direct-sonnet");
 
-    const block = await cli("gate", "--raw", regressed, "--candidate", "no-resource-injection", "--reference", "routed", "--output", join(root, "cli-block"));
+    const block = await cli("gate", "--raw", regressed, "--config", CONFIG, "--candidate", "no-resource-injection", "--reference", "routed", "--output", join(root, "cli-block"));
     expect(block).toMatchObject({ code: 1 });
     expect(block.stdout).toContain("Gate BLOCK");
     expect(block.stdout).toContain("BLOCK: 5 of 30 cases had a critical error");

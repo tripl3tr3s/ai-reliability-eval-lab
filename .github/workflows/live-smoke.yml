@@ -4,10 +4,10 @@ on:
   workflow_dispatch:
     inputs:
       dataset:
-        description: "Smoke dataset: v2 or v3"
+        description: "Smoke dataset: v3 (current) or v2"
         type: choice
-        options: [v2, v3]
-        default: v2
+        options: [v3, v2]
+        default: v3
   pull_request:
     types: [labeled, synchronize]
 
@@ -37,11 +37,11 @@ jobs:
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm validate
-      - run: pnpm benchmark --config config/smoke.${{ inputs.dataset || 'v2' }}.json
+      - run: pnpm benchmark --config config/smoke.${{ inputs.dataset || 'v3' }}.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: live-smoke-${{ inputs.dataset || 'v2' }}-${{ github.sha }}
+          name: live-smoke-${{ inputs.dataset || 'v3' }}-${{ github.sha }}
           path: runs/
           if-no-files-found: warn
           retention-days: 30

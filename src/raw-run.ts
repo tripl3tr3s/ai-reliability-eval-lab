@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { TERMINATION_REASONS } from "./contracts.js";
 import type { RawRun } from "./scoring.js";
 
 /** Model ids produced by the scripted mock model start with this prefix. */
@@ -26,6 +27,8 @@ export const RawRunSchema = z.object({
   modelIds: z.array(z.string()).optional(),
   policyViolation: z.boolean().optional(),
   duplicateMutation: z.boolean().optional(),
+  terminationReason: z.enum(TERMINATION_REASONS).optional(),
+  refusalCategory: z.string().min(1).max(64).optional(),
   routedDomain: z.string().min(1).optional(),
   tier: z.enum(["standard", "advanced"]).optional(),
 }).passthrough();

@@ -3,7 +3,7 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Status | Accepted. Implemented on `feat/go-live-gate` (`6a4db31`), not yet merged. |
+| Status | Accepted. Implemented in PR #1, merged as `76cc5e0` (commits `6a4db31`). |
 | Related | [Design note](../design-note.md), [gate ADR](2026-10-10-three-way-gate-with-versioned-thresholds.md) |
 
 ## Context
