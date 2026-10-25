@@ -28,7 +28,7 @@
     {
       "metric": "completion",
       "margin": 0.05,
-      "rationale": "Widened from 3 to 5 points because 90 cases cannot demonstrate 3: with the arms agreeing on every case the Bonett-Price lower bound is -3.01 points. At 5 points, with no case won by the candidate, the gate passes with at most one lost case (lower bound -4.77) and is INCONCLUSIVE from two; cases the candidate wins offset losses only partly, because churn widens the interval (one each way passes at -4.32, two each way does not, three wins and two losses passes, one win and two losses does not). It blocks from 12 lost cases (a 13.3 point drop)."
+      "rationale": "Widened from 3 to 5 points because 90 cases cannot demonstrate 3: with the arms agreeing on every case the Bonett-Price lower bound is -3.01 points. At 5 points, with no case won by the candidate, the gate passes with at most one lost case (lower bound -4.77) and is INCONCLUSIVE from two; cases the candidate wins offset losses only partly, because churn widens the interval (one each way passes at -4.26, two each way does not, three wins and two losses passes, one win and two losses does not). It blocks from 12 lost cases (a 13.3 point drop)."
     },
     {
       "metric": "headlineToolAccuracy",

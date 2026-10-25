@@ -89,6 +89,15 @@ describe("thresholds-v3 file", () => {
     }
   });
 
+  it("quotes lower bounds in its rationales that match the Bonett-Price interval", () => {
+    const lowerBound = (cases: number, candidateOnly: number, referenceOnly: number): string =>
+      (100 * bonettPriceInterval({ firstOnly: candidateOnly, secondOnly: referenceOnly, bothPassed: cases - candidateOnly - referenceOnly, bothFailed: 0 }).low).toFixed(2);
+    expect([lowerBound(90, 0, 0), lowerBound(90, 0, 1), lowerBound(90, 1, 1), lowerBound(18, 0, 0)]).toEqual(["-3.01", "-4.77", "-4.26", "-13.86"]);
+    const rationale = (metric: string): string => v3.nonInferiority.find((item) => item.metric === metric)!.rationale;
+    for (const quoted of ["-3.01", "-4.77", "-4.26"]) expect(rationale("completion")).toContain(quoted);
+    expect(rationale("recovery")).toContain("-13.86");
+  });
+
   it("sets the 18-case recovery margin so it passes while no case is lost and blocks from nine lost cases", () => {
     const m = margin("recovery");
     expect(status(18, 0, 0, m)).toBe("PASS");

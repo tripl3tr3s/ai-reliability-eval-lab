@@ -24,6 +24,7 @@
     "eval": "tsx src/cli.ts run",
     "gate": "tsx src/cli.ts gate",
     "gate:mock": "pnpm mock:run --config config/full.v2.json --output runs/mock/results.jsonl && pnpm gate --raw runs/mock/results.jsonl --config config/full.v2.json --output reports/generated/mock-gate",
+    "gate:mock:v3:noisy": "pnpm mock:run --config config/full.v3.json --profile noisy --output runs/mock/v3-noisy-results.jsonl && pnpm gate --raw runs/mock/v3-noisy-results.jsonl --config config/full.v3.json --output reports/generated/mock-gate-v3-noisy",
     "gate:mock:v3": "pnpm mock:run --config config/full.v3.json --output runs/mock/v3-results.jsonl && pnpm gate --raw runs/mock/v3-results.jsonl --config config/full.v3.json --output reports/generated/mock-gate-v3",
     "lint": "eslint .",
     "mock:run": "tsx src/cli.ts mock-run",

@@ -3,10 +3,10 @@ import { isV3Case, type DatasetCase, type DatasetCaseV2, type DatasetCaseV3 } fr
 import { MOCK_MODEL_PREFIX } from "../raw-run.js";
 
 export const SCRIPTED_MODEL_ID = `${MOCK_MODEL_PREFIX}scripted-v1`;
-export const SCRIPTED_PROFILES = ["clean", "regressed"] as const;
+export const SCRIPTED_PROFILES = ["clean", "regressed", "noisy"] as const;
 export type ScriptedProfile = (typeof SCRIPTED_PROFILES)[number];
 
-export type ScriptedBehaviour = "follow-plan" | "wrong-answer" | "unauthorized-write";
+export type ScriptedBehaviour = "follow-plan" | "wrong-answer" | "unauthorized-write" | "omission";
 
 export interface ScriptedContext {
   readonly datasetCase: DatasetCaseV2 | DatasetCaseV3;
@@ -15,12 +15,25 @@ export interface ScriptedContext {
   readonly resourcesInjected: boolean;
   /** Model the request was sent to. */
   readonly model: string;
+  /** The run in progress, when the caller reports it (the mock runner does). Runs are sequential. */
+  readonly job?: { readonly configuration: string; readonly repeat: number };
 }
 
 export interface ScriptedModelOptions {
   /** Models whose answers the regressed profile degrades even with resources injected (v3: the advanced-tier executor). */
   readonly regressModels?: ReadonlySet<string>;
+  /** Returns the run in progress, so a profile can vary by arm and repeat. */
+  readonly currentJob?: () => ScriptedContext["job"];
 }
+
+/** The noisy profile's reference arms: the direct baselines. Every other arm is a candidate. */
+const isReferenceArm = (configuration: string): boolean => configuration.startsWith("direct-");
+/** Cases whose answer drops a required fact in repeats 0 to 2 of every arm, so failures cluster by case. */
+export const NOISY_SHARED_CASES = (caseIndex: number): boolean => caseIndex % 10 === 3;
+export const NOISY_SHARED_FAILING_REPEATS = 3;
+/** v3 case lost only by the candidate arms (repeat 1), and v3 case lost only by the reference arm (repeat 2). Neither applies recovery. */
+export const NOISY_CANDIDATE_LOSS = "v3-consulta-69b-desvirtuado-08";
+export const NOISY_REFERENCE_LOSS = "v3-multi-cancelar-ya-cancelada-42";
 
 /**
  * Built-in behaviours.
@@ -30,11 +43,23 @@ export interface ScriptedModelOptions {
  *   arm a known regression against the routed arm. Dataset v3 has no resource ablation arm, so
  *   createScriptedModel also degrades requests sent to `regressModels` (the advanced executor of the
  *   production-mirror arm), making that arm a known regression against the direct reference.
+ * - noisy: needs the run in progress (`currentJob`). Cases with index 3 mod 10 omit a required fact in
+ *   repeats 0 to 2 of every arm, so repeats of a case disagree and failures cluster by case (positive ICC). One v3
+ *   case fails one candidate repeat and another one reference repeat, so each arm loses exactly one case under the every-repeat rule. The omission
+ *   answers are the dataset's own `omission` counterexamples (v3) or "No result." (v2); neither is a
+ *   critical error, and tool calls are unchanged. Without a job it throws, so the noise can never silently disappear.
  */
 export const PROFILE_BEHAVIOUR: Readonly<Record<ScriptedProfile, (context: ScriptedContext) => ScriptedBehaviour>> = {
   clean: () => "follow-plan",
   regressed: ({ caseIndex, resourcesInjected, datasetCase }) =>
     resourcesInjected ? "follow-plan" : datasetCase.expectedState.length > 0 ? "unauthorized-write" : caseIndex % 3 === 0 ? "wrong-answer" : "follow-plan",
+  noisy: ({ caseIndex, job, datasetCase }) => {
+    if (job === undefined) throw new Error("The noisy profile needs the run in progress; pass currentJob to createScriptedModel");
+    if (NOISY_SHARED_CASES(caseIndex) && job.repeat < NOISY_SHARED_FAILING_REPEATS) return "omission";
+    if (datasetCase.id === NOISY_CANDIDATE_LOSS && !isReferenceArm(job.configuration) && job.repeat === 1) return "omission";
+    if (datasetCase.id === NOISY_REFERENCE_LOSS && isReferenceArm(job.configuration) && job.repeat === 2) return "omission";
+    return "follow-plan";
+  },
 };
 
 /** Sets a dotted path ("payment.amount", "documentos.0.id") without mutating the input; numeric segments build arrays. */
@@ -92,7 +117,8 @@ export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (c
       const { datasetCase } = known;
       const resourcesInjected = request.messages.some(({ role, content }) => role === "system" && (content.includes("Operational resources:") || content.includes("Politicas operativas:")));
       const forcedRegression = PROFILE_BEHAVIOUR.regressed === behaviour && options.regressModels?.has(request.model) === true;
-      const mode = behaviour({ ...known, resourcesInjected: resourcesInjected && !forcedRegression, model: request.model });
+      const job = options.currentJob?.();
+      const mode = behaviour({ ...known, resourcesInjected: resourcesInjected && !forcedRegression, model: request.model, ...(job === undefined ? {} : { job }) });
       const plan = datasetCase.acceptedPlans[0]!;
       const turn = request.messages.filter(({ role }) => role === "tool").length;
       const schemaOf = (tool: string) => request.tools.find(({ name }) => name === tool)?.inputSchema;
@@ -107,7 +133,11 @@ export function createScriptedModel(cases: readonly DatasetCase[], behaviour: (c
         return respond(request, "", [{ id: `call-${turn + 1}`, name: write, input: fillRequired(schemaOf(write), { idempotencyKey: `${datasetCase.id}-unplanned` }) }]);
       }
       const answer = isV3Case(datasetCase)
-        ? mode === "follow-plan" ? datasetCase.referenceAnswer : datasetCase.counterexamples[0]!.answer
+        ? mode === "follow-plan"
+          ? datasetCase.referenceAnswer
+          : mode === "omission"
+            ? (datasetCase.counterexamples.find(({ kind }) => kind === "omission") ?? datasetCase.counterexamples[0]!).answer
+            : datasetCase.counterexamples[0]!.answer
         : mode === "follow-plan" ? datasetCase.requiredAssertions[0]!.map(({ includes }) => includes).join(". ") : "No result.";
       return respond(request, JSON.stringify({ outcome: datasetCase.category === "abstention" ? "abstained" : "completed", answer, claims: [] }), []);
     },

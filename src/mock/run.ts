@@ -20,11 +20,16 @@ export async function runMockExperiment(input: MockRunInput): Promise<readonly R
   const dataset = await loadDataset(`${config.dataset}/manifest.json`);
   if (dataset.version === "v1") throw new Error("Mock runs require a dataset with accepted plans (v2 or v3)");
   await rm(input.outputPath, { force: true });
+  // Runs are sequential (concurrency 1), so the last job_started event names the run every request belongs to.
+  let currentJob: { configuration: string; repeat: number } | undefined;
   return runExperiment({
     config,
-    adapter: createScriptedModel(dataset.cases, PROFILE_BEHAVIOUR[input.profile], { regressModels: advancedExecutors(config.configurations) }),
+    adapter: createScriptedModel(dataset.cases, PROFILE_BEHAVIOUR[input.profile], { regressModels: advancedExecutors(config.configurations), currentJob: () => currentJob }),
     outputPath: input.outputPath,
     policyOverrides: { toolTimeoutMs: 25 },
+    onProgress: (event) => {
+      if (event.type === "job_started") currentJob = { configuration: event.configuration, repeat: event.repeat };
+    },
   });
 }
 

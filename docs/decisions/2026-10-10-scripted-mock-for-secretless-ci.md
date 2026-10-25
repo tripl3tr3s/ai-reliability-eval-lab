@@ -14,7 +14,7 @@ The pull request job was described as a validation and replay gate, but it repla
 
 1. `src/mock/scripted-model.ts` is a deterministic `ModelAdapter`. It recognises the case from the prompt, walks the case's first accepted plan one tool call per turn, fills required tool arguments from the tool schema, and returns the final JSON. Cost is zero and the model id starts with `mock-`.
 2. `pnpm mock:run` runs it through the real planner, runner, tools, fault schedule, and persistence. A `policyOverrides` input on `runExperiment` shortens the tool timeout so the timeout-fault case does not wait 10 seconds per run.
-3. Two profiles: `clean` (always correct) and `regressed` (without injected resources, every third case answers wrongly and write cases attempt an unplanned write).
+3. Two profiles: `clean` (always correct) and `regressed` (without injected resources, every third case answers wrongly and write cases attempt an unplanned write). A third, `noisy`, was added on 2026-10-25: it varies by case, arm and repeat (the mock runner tells the model which run is in progress) so CI exercises non-degenerate intervals; `pnpm gate:mock:v3:noisy` expects PASS.
 4. `pnpm gate:mock` runs the clean profile and the gate. It is one added step in `.github/workflows/ci.yml`. Tests spawn the real CLI and assert exit codes 0, 1, and 2.
 5. Mock data is marked at three levels: the model id prefix, `dataSource: "mock"` in the gate output, and a report status forced to `pending` so the Pages workflow can never publish it.
 

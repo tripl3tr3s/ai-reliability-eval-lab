@@ -77,9 +77,12 @@ pnpm build
 Run the whole pipeline (planner, runner, tools, fault schedule, scoring, gate) against a scripted model, without credentials:
 
 ```sh
-pnpm gate:mock:v3   # dataset v3, writes runs/mock/v3-results.jsonl and reports/generated/mock-gate-v3
-pnpm gate:mock      # dataset v2, writes runs/mock/results.jsonl and reports/generated/mock-gate
+pnpm gate:mock:v3        # dataset v3, writes runs/mock/v3-results.jsonl and reports/generated/mock-gate-v3
+pnpm gate:mock:v3:noisy  # dataset v3 with outcomes that vary by case, arm and repeat (expected: PASS)
+pnpm gate:mock           # dataset v2, writes runs/mock/results.jsonl and reports/generated/mock-gate
 ```
+
+The clean profile agrees on every case, so its intervals only show the width the sample allows. The `noisy` profile drops a required fact in three of five repeats of nine cases in both arms, and in one repeat of one case per arm. It gives a positive ICC and one lost case each way, the boundary where `thresholds-v3` still passes (lower bound -4.26 points against a 5 point margin), without any critical error.
 
 Both outputs are labelled as mock data, and a report built from mock data always stays `pending`. `pnpm benchmark:mock` runs the experiment test suite, which exercises the runner with mocked providers.
 

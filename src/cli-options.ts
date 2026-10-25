@@ -113,7 +113,7 @@ export type CliArguments =
       readonly command: "mock-run";
       readonly configPath?: string;
       readonly outputPath?: string;
-      readonly profile: "clean" | "regressed";
+      readonly profile: "clean" | "regressed" | "noisy";
     };
 
 const ConfigurationNameSchema = z.string().trim().regex(/^[a-z0-9][a-z0-9-]{0,63}$/u, "Configuration names use lowercase letters, digits, and hyphens");
@@ -302,7 +302,7 @@ export function parseCliArguments(argv: readonly string[]): CliArguments {
     const parsed = z.object({
       config: CliPathSchema.optional(),
       output: CliPathSchema.optional(),
-      profile: z.enum(["clean", "regressed"]),
+      profile: z.enum(["clean", "regressed", "noisy"]),
     }).strict().parse(values);
     return {
       command,
