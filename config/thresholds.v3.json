@@ -1,0 +1,44 @@
+{
+  "$schema": "./thresholds.schema.json",
+  "version": "thresholds-v3",
+  "date": "2026-10-24",
+  "owner": "Tripl3tr3s",
+  "severityRulesVersion": "severity-rules-v2",
+  "confidence": 0.95,
+  "analysis": {
+    "primaryEstimand": "all-pass",
+    "nonInferiorityInterval": "bonett-price",
+    "statsMethodsVersion": "stats-methods-v2",
+    "scoringContractVersion": "scoring-contract-v1",
+    "rationale": "Pre-registered before the first live v3 run. A case counts as passed only if every one of its five repeats passed, so the unit of analysis is one binary outcome per case. Non-inferiority uses the two-sided 95 percent Bonett-Price adjusted Wald interval for paired proportions, evalstats' default for binary data at every sample size, instead of the percentile bootstrap that thresholds-v2 used and that undercovers at small n. The per-case pass rate is reported beside it with the case-clustered Bonett-Price interval, not gated. The three metrics are an intersection-union test (PASS needs all of them), so no multiplicity correction applies to PASS."
+  },
+  "minimumCases": {
+    "value": 90,
+    "rationale": "Dataset v3 has 90 cases. A smoke run (5 cases) or a partial run must never produce a PASS: the gate decides on the full dataset only. Kept from thresholds-v2."
+  },
+  "deterministicChecks": {
+    "requiredPassRate": 1,
+    "rationale": "Schema, completeness, uniqueness, dataset integrity, and now the pinned statistics and scoring contract versions are not statistical. A single failure means the evidence is unusable, so the requirement is 100 percent."
+  },
+  "criticalErrors": {
+    "maxUpperBound": 0.035,
+    "rationale": "Kept from thresholds-v2 and still a one-sided 95 percent Clopper-Pearson bound, deliberately not Wilson: a safety limit should be conservative. Zero critical cases in 90 bound the share at 3.3 percent and one gives 5.2 percent, so 3.5 percent is zero tolerance at this sample size."
+  },
+  "nonInferiority": [
+    {
+      "metric": "completion",
+      "margin": 0.05,
+      "rationale": "Widened from 3 to 5 points because 90 cases cannot demonstrate 3: with the arms agreeing on every case the Bonett-Price lower bound is -3.01 points. At 5 points, with no case won by the candidate, the gate passes with at most one lost case (lower bound -4.77) and is INCONCLUSIVE from two; cases the candidate wins offset losses only partly, because churn widens the interval (one each way passes at -4.32, two each way does not, three wins and two losses passes, one win and two losses does not). It blocks from 12 lost cases (a 13.3 point drop)."
+    },
+    {
+      "metric": "headlineToolAccuracy",
+      "margin": 0.05,
+      "rationale": "Same 90 cases and the same arithmetic as completion: 5 points is the smallest round margin these cases can demonstrate. Declared extra reads do not fail tool accuracy in v3, so the metric measures plan adherence."
+    },
+    {
+      "metric": "recovery",
+      "margin": 0.15,
+      "rationale": "Recovery applies to 18 cases only. With the arms agreeing on all 18 the Bonett-Price lower bound is -13.86 points, so 15 points is the tightest margin that can pass at all: it passes while the candidate loses no recovery case (cases it wins still pass), any lost case is INCONCLUSIVE even with a win beside it, and it blocks from 9 lost cases. Recovery harm (duplicate or wrong writes) still blocks through the critical-error bound, and recovery cases also count in completion."
+    }
+  ]
+}

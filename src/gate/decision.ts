@@ -1,9 +1,22 @@
 import type { DatasetCase } from "../dataset.js";
 import { caseTallies, type StatisticsMetric } from "../report-statistics.js";
 import { scoreRun, type RawRun, type RunScore } from "../scoring.js";
-import { clopperPearsonInterval, pairedBootstrap, zeroFailureSampleSize, type Interval } from "../stats/index.js";
+import type { ScoringContract } from "../scoring-contract.js";
+import {
+  bonettPriceClusterInterval,
+  bonettPriceInterval,
+  clopperPearsonInterval,
+  discordantCounts,
+  mcnemarMidP,
+  pairedBootstrap,
+  pValueByInversion,
+  STATS_METHODS_VERSION,
+  zeroFailureSampleSize,
+  type CaseTally,
+  type Interval,
+} from "../stats/index.js";
 import { classifyCriticalErrors, CRITICAL_ERROR_TYPES, LEGACY_COMPATIBLE_RULES, SEVERITY_RULES_VERSION, type CriticalErrorType } from "./severity.js";
-import type { Thresholds } from "./thresholds.js";
+import { analysisOf, type NonInferiorityInterval, type PrimaryEstimand, type Thresholds } from "./thresholds.js";
 
 export type GateDecision = "PASS" | "BLOCK" | "INCONCLUSIVE";
 export const GATE_EXIT_CODES: Readonly<Record<GateDecision, number>> = { PASS: 0, BLOCK: 1, INCONCLUSIVE: 2 };
@@ -26,6 +39,8 @@ export interface GateInput {
   readonly candidate: GateArm;
   readonly reference: GateArm;
   readonly datasetIntegrityVerified: boolean;
+  /** Scoring contract in effect. Required when the thresholds pin a scoring contract version. */
+  readonly scoringContract?: ScoringContract;
 }
 
 export interface GateCheck { readonly id: string; readonly passed: boolean; readonly detail: string }
@@ -41,6 +56,16 @@ export interface GateComparison {
   readonly detail: string;
   /** Rough case count at which the interval would clear the margin, when that is estimable. */
   readonly casesSuggested: number | null;
+  readonly estimand: PrimaryEstimand;
+  readonly method: NonInferiorityInterval;
+  /** Two-sided p-value for no difference: McNemar mid-p for all-pass, null for the bootstrap. Reported, not gated. */
+  readonly pValue: number | null;
+  /**
+   * Per-case pass rates with the case-clustered Bonett-Price interval and its inverted p-value, reported beside
+   * an all-pass decision so a difference in stability is not mistaken for a difference in accuracy. Not gated.
+   * Null for the legacy analysis.
+   */
+  readonly secondary: { readonly estimand: "per-case-rate"; readonly method: "bonett-price-cluster"; readonly difference: number; readonly interval: Interval; readonly pValue: number } | null;
 }
 
 export interface GateResult {
@@ -48,6 +73,8 @@ export interface GateResult {
   readonly exitCode: number;
   readonly thresholdsVersion: string;
   readonly thresholdsDate: string;
+  /** The analysis the thresholds selected and the statistics code that ran it. */
+  readonly analysis: { readonly primaryEstimand: PrimaryEstimand; readonly nonInferiorityInterval: NonInferiorityInterval; readonly statsMethodsVersion: string };
   readonly severityRulesVersion: string;
   readonly confidence: number;
   readonly candidate: { readonly source: string; readonly configuration: string; readonly cases: number; readonly runs: number };
@@ -91,36 +118,118 @@ function gridCheck(label: string, runs: readonly RawRun[], knownCases: ReadonlyS
   ];
 }
 
-function compareMetric(
-  metric: StatisticsMetric,
-  margin: number,
-  candidate: readonly RunScore[],
-  reference: readonly RunScore[],
-  candidateConfiguration: string,
-  referenceConfiguration: string,
-  thresholds: Thresholds,
-  seed: number,
-): GateComparison {
-  const referenceByCase = new Map(caseTallies(reference, referenceConfiguration, metric).map((tally) => [tally.caseId, tally]));
-  const pairs = caseTallies(candidate, candidateConfiguration, metric).flatMap((tally) => {
+interface MetricInput {
+  readonly metric: StatisticsMetric;
+  readonly margin: number;
+  readonly candidate: readonly RunScore[];
+  readonly reference: readonly RunScore[];
+  readonly candidateConfiguration: string;
+  readonly referenceConfiguration: string;
+  readonly thresholds: Thresholds;
+  readonly seed: number;
+}
+
+/** Candidate and reference tallies of the cases scored for the metric in both arms, ordered by case id. */
+function pairedTallies(input: MetricInput): readonly (readonly [CaseTally, CaseTally])[] {
+  const referenceByCase = new Map(caseTallies(input.reference, input.referenceConfiguration, input.metric).map((tally) => [tally.caseId, tally]));
+  return caseTallies(input.candidate, input.candidateConfiguration, input.metric).flatMap((tally) => {
     const other = referenceByCase.get(tally.caseId);
-    return other ? [[tally.passes / tally.trials, other.passes / other.trials] as const] : [];
+    return other ? [[tally, other] as const] : [];
   });
-  const bootstrap = pairedBootstrap(pairs, { seed, resamples: thresholds.bootstrap.resamples, confidence: thresholds.confidence });
-  if (bootstrap === null) {
-    return { metric, margin, cases: 0, difference: null, interval: null, status: "INCONCLUSIVE", detail: "no cases are scored for this metric in both arms", casesSuggested: null };
-  }
-  const { estimate, low, high } = bootstrap;
-  const degenerate = low === high && thresholds.zeroWidthInterval.policy === "inconclusive";
-  const status: GateDecision = high < -margin ? "BLOCK" : low < -margin || degenerate ? "INCONCLUSIVE" : "PASS";
-  const headroom = estimate + margin;
-  const casesSuggested = status === "INCONCLUSIVE" && headroom > 0 ? Math.ceil(pairs.length * ((estimate - low) / headroom) ** 2) : null;
-  const detail = status === "BLOCK"
+}
+
+const rate = ({ passes, trials }: CaseTally): number => passes / trials;
+const everyRepeatPassed = ({ passes, trials }: CaseTally): boolean => passes === trials;
+
+function classify(low: number, high: number, margin: number): GateDecision {
+  return high < -margin ? "BLOCK" : low < -margin ? "INCONCLUSIVE" : "PASS";
+}
+
+function describeStatus(status: GateDecision, margin: number): string {
+  return status === "BLOCK"
     ? `the whole interval is below the margin of ${points(-margin)}`
     : status === "INCONCLUSIVE"
-      ? low < -margin ? `the interval spans the margin of ${points(-margin)}` : "no case differs between the arms, so the interval has zero width and cannot demonstrate the margin"
+      ? `the interval spans the margin of ${points(-margin)}`
       : `the lower bound stays above the margin of ${points(-margin)}`;
-  return { metric, margin, cases: pairs.length, difference: estimate, interval: { low, high }, status, detail, casesSuggested };
+}
+
+/**
+ * Rough case count at which an interval of the same shape would clear the margin: the half-width shrinks
+ * with the square root of the number of units (n + 2 for the Bonett-Price pseudo-pairs).
+ */
+function suggestCases(status: GateDecision, centre: number, low: number, margin: number, units: number, pseudoUnits: number): number | null {
+  const headroom = centre + margin;
+  if (status !== "INCONCLUSIVE" || !(headroom > 0)) return null;
+  return Math.ceil((units + pseudoUnits) * ((centre - low) / headroom) ** 2) - pseudoUnits;
+}
+
+/** thresholds-v1 and thresholds-v2: per-case pass rates with a percentile paired bootstrap, unchanged. */
+function compareByBootstrap(input: MetricInput, pairs: readonly (readonly [CaseTally, CaseTally])[]): GateComparison {
+  const { metric, margin, thresholds } = input;
+  const settings = thresholds.bootstrap!;
+  const base = { metric, margin, estimand: "per-case-rate" as const, method: "percentile-bootstrap" as const, pValue: null, secondary: null };
+  const bootstrap = pairedBootstrap(pairs.map(([candidate, reference]) => [rate(candidate), rate(reference)] as const), { seed: input.seed, resamples: settings.resamples, confidence: thresholds.confidence });
+  if (bootstrap === null) {
+    return { ...base, cases: 0, difference: null, interval: null, status: "INCONCLUSIVE", detail: "no cases are scored for this metric in both arms", casesSuggested: null };
+  }
+  const { estimate, low, high } = bootstrap;
+  const degenerate = low === high && thresholds.zeroWidthInterval!.policy === "inconclusive";
+  const status: GateDecision = degenerate && classify(low, high, margin) === "PASS" ? "INCONCLUSIVE" : classify(low, high, margin);
+  const detail = status === "INCONCLUSIVE" && low >= -margin
+    ? "no case differs between the arms, so the interval has zero width and cannot demonstrate the margin"
+    : describeStatus(status, margin);
+  return { ...base, cases: pairs.length, difference: estimate, interval: { low, high }, status, detail, casesSuggested: suggestCases(status, estimate, low, margin, pairs.length, 0) };
+}
+
+/**
+ * thresholds-v3: the Bonett-Price adjusted Wald interval. With the all-pass estimand each case is one binary
+ * outcome (every repeat passed) and the interval is the single-run form; with per-case rates it is the
+ * case-clustered form. The interval never has zero width, so there is no degenerate case to police.
+ */
+function compareByBonettPrice(input: MetricInput, pairs: readonly (readonly [CaseTally, CaseTally])[], estimand: PrimaryEstimand): GateComparison {
+  const { metric, margin, thresholds } = input;
+  const base = { metric, margin, estimand, method: "bonett-price" as const };
+  if (pairs.length === 0) {
+    return { ...base, cases: 0, difference: null, interval: null, status: "INCONCLUSIVE", detail: "no cases are scored for this metric in both arms", casesSuggested: null, pValue: null, secondary: null };
+  }
+  const differences = pairs.map(([candidate, reference]) => rate(candidate) - rate(reference));
+  const clustered = bonettPriceClusterInterval(differences, thresholds.confidence);
+  const clusteredP = pValueByInversion((alpha) => bonettPriceClusterInterval(differences, 1 - alpha));
+  const counts = discordantCounts(pairs.map(([candidate, reference]) => [everyRepeatPassed(candidate), everyRepeatPassed(reference)] as const));
+  const primary = estimand === "all-pass" ? bonettPriceInterval(counts, thresholds.confidence) : clustered;
+  const status = classify(primary.low, primary.high, margin);
+  const centre = (primary.low + primary.high) / 2;
+  const suggested = suggestCases(status, centre, primary.low, margin, pairs.length, 2);
+  // Never suggest as few cases as were already run when the interval still spans the margin.
+  const suggestedAtLeastMore = suggested === null ? null : Math.max(pairs.length + 1, suggested);
+  return {
+    ...base,
+    cases: pairs.length,
+    difference: primary.estimate,
+    interval: { low: primary.low, high: primary.high },
+    status,
+    detail: describeStatus(status, margin),
+    casesSuggested: suggestedAtLeastMore,
+    pValue: estimand === "all-pass" ? mcnemarMidP(counts) : clusteredP,
+    secondary: estimand === "all-pass"
+      ? { estimand: "per-case-rate", method: "bonett-price-cluster", difference: clustered.estimate, interval: { low: clustered.low, high: clustered.high }, pValue: clusteredP }
+      : null,
+  };
+}
+
+function compareMetric(input: MetricInput): GateComparison {
+  const pairs = pairedTallies(input);
+  const { primaryEstimand, nonInferiorityInterval } = analysisOf(input.thresholds);
+  switch (nonInferiorityInterval) {
+    case "percentile-bootstrap":
+      return compareByBootstrap(input, pairs);
+    case "bonett-price":
+      return compareByBonettPrice(input, pairs, primaryEstimand);
+    default: {
+      const unhandled: never = nonInferiorityInterval;
+      throw new Error(`Unhandled non-inferiority interval: ${String(unhandled)}`);
+    }
+  }
 }
 
 /**
@@ -149,6 +258,24 @@ function severityRulesCheck(pinned: string, cases: readonly DatasetCase[]): Gate
   return { id: "severity_rules_version", passed, detail };
 }
 
+/** Deterministic checks for the versions a thresholds file pins. Legacy files pin none, so their checks are unchanged. */
+function pinnedVersionChecks(thresholds: Thresholds, contract: ScoringContract | undefined): readonly GateCheck[] {
+  const pinned = thresholds.analysis;
+  if (pinned === undefined) return [];
+  const statsPassed = pinned.statsMethodsVersion === STATS_METHODS_VERSION;
+  const contractPassed = contract !== undefined && contract.version === pinned.scoringContractVersion && contract.matchesLock;
+  return [
+    { id: "stats_methods_version", passed: statsPassed, detail: `thresholds expect ${pinned.statsMethodsVersion}, code implements ${STATS_METHODS_VERSION}` },
+    {
+      id: "scoring_contract_version",
+      passed: contractPassed,
+      detail: contract === undefined
+        ? `thresholds expect ${pinned.scoringContractVersion}, but no scoring contract was provided`
+        : `thresholds expect ${pinned.scoringContractVersion}; code is ${contract.version}, which ${contract.matchesLock ? "matches" : "does NOT match"} its lock`,
+    },
+  ];
+}
+
 export function evaluateGate(input: GateInput): GateResult {
   const { thresholds, candidate, reference } = input;
   const byId = new Map(input.cases.map((item) => [item.id, item]));
@@ -170,6 +297,7 @@ export function evaluateGate(input: GateInput): GateResult {
     { id: "raw_rows_valid", passed: invalidRows === 0, detail: invalidRows === 0 ? "every row matches the raw run schema" : `${invalidRows} rows failed schema validation` },
     ...gridCheck("candidate", candidateRuns, knownCases, input.expectedRepeats),
     ...gridCheck("reference", referenceRuns, knownCases, input.expectedRepeats),
+    ...pinnedVersionChecks(thresholds, input.scoringContract),
     { id: "arms_cover_same_cases", passed: sameCases, detail: sameCases ? "candidate and reference cover the same cases" : "candidate and reference cover different cases" },
   ];
   const checksPassed = checks.every(({ passed }) => passed);
@@ -197,8 +325,11 @@ export function evaluateGate(input: GateInput): GateResult {
   const minimumStatus: GateDecision = candidateCases.size >= thresholds.minimumCases.value ? "PASS" : "INCONCLUSIVE";
   const candidateScores = scoreKnown(candidateRuns);
   const referenceScores = scoreKnown(referenceRuns);
-  const comparisons = thresholds.nonInferiority.map(({ metric, margin }, index) =>
-    compareMetric(metric, margin, candidateScores, referenceScores, candidate.configuration, reference.configuration, thresholds, thresholds.bootstrap.seed + index));
+  const comparisons = thresholds.nonInferiority.map(({ metric, margin }, index) => compareMetric({
+    metric, margin, candidate: candidateScores, reference: referenceScores,
+    candidateConfiguration: candidate.configuration, referenceConfiguration: reference.configuration,
+    thresholds, seed: (thresholds.bootstrap?.seed ?? 0) + index,
+  }));
 
   const decision = worst([checksPassed ? "PASS" : "BLOCK", criticalStatus, minimumStatus, ...comparisons.map(({ status }) => status)]);
   const reasons = [
@@ -224,6 +355,7 @@ export function evaluateGate(input: GateInput): GateResult {
     exitCode: GATE_EXIT_CODES[decision],
     thresholdsVersion: thresholds.version,
     thresholdsDate: thresholds.date,
+    analysis: { ...analysisOf(thresholds), statsMethodsVersion: STATS_METHODS_VERSION },
     severityRulesVersion: SEVERITY_RULES_VERSION,
     confidence: thresholds.confidence,
     candidate: { source: candidate.source, configuration: candidate.configuration, cases: candidateCases.size, runs: candidateRuns.length },

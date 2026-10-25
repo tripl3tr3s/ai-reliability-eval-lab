@@ -3,8 +3,8 @@
 | Field | Value |
 | --- | --- |
 | Date | 2026-10-10 |
-| Applies to | `src/gate/`, `src/stats/`, `src/report-statistics.ts`, `config/thresholds.v1.json`, `config/thresholds.v2.json` |
-| Thresholds | `thresholds-v1` with `severity-rules-v1` (datasets v1, v2); `thresholds-v2` with `severity-rules-v2` (dataset v3) |
+| Applies to | `src/gate/`, `src/stats/`, `src/report-statistics.ts`, `config/thresholds.v1.json`, `config/thresholds.v2.json`, `config/thresholds.v3.json` |
+| Thresholds | `thresholds-v1` with `severity-rules-v1` (datasets v1, v2); `thresholds-v3` with `severity-rules-v2` (dataset v3, default since 2026-10-24); `thresholds-v2` kept to replay earlier v3 decisions |
 | Results | None. No complete live run exists. Every number below is a property of the method or of the sample size, not a measured result. |
 
 This note describes what the code does today. Where a choice was a judgement call it is listed in the ambiguity register with the alternative.
@@ -128,6 +128,17 @@ Dataset v3 is gated with `thresholds-v2` and `severity-rules-v2`; everything abo
 - **Extra reads.** Declared `allowedExtraCalls` (reads only, bounded counts) no longer fail tool accuracy; undeclared calls and every extra write still do.
 - **Scorer validation is authored, not labeled.** Every case's reference answer passes and its counterexamples fail, but TPR and TNR against human labels of live answers are still pending.
 - **Gap: no absolute floor.** Non-inferiority is relative. Two arms that both fail every case pass; the scripted mock demonstrated it. A floor on completion and recovery needs a reviewed thresholds change.
+
+## 6b. thresholds-v3 addendum (2026-10-24)
+
+`thresholds-v3` replaces step 4 of the analysis plan (section 4) for dataset v3. Everything else in sections 4 to 6a still applies.
+
+- **Estimand.** A case passes only if every repeat passed: one binary outcome per case (register item 9 now defaults to the alternative).
+- **Interval.** Two-sided 95% Bonett-Price adjusted Wald interval for paired proportions, from `src/stats` (`stats-methods-v2`, checked against evalstats 0.3.3). It replaces the percentile bootstrap, which undercovers at small n. It never has zero width, so register item 1 no longer arises.
+- **Margins.** 5 points for completion and tool accuracy, 15 points for recovery. With perfect agreement, 90 cases bound the difference at -3.01 points and 18 cases at -13.86, so the old 3 point margins could never pass. The [decision record](decisions/2026-10-24-thresholds-v3-bonett-price-gate.md) tabulates where each decision changes.
+- **Reported, not gated.** The McNemar mid-p of the primary outcome, and the per-case pass rate difference with the case-clustered Bonett-Price interval (a multi-run method evalstats has not validated).
+- **Pinned versions.** The thresholds pin the statistics methods and the scoring contract; a mismatch, or a scorer that does not match its lock, is a deterministic BLOCK.
+- **Multiplicity.** Unchanged (register item 8): PASS needs every metric, which is an intersection-union test.
 
 ## 7. Limitations
 
