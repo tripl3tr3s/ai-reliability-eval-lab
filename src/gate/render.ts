@@ -17,6 +17,9 @@ export interface GateReport extends GateResult {
   readonly inputs: GateInputs;
 }
 
+const ESTIMAND_LABEL = { "all-pass": "a case passes only if every repeat passed", "per-case-rate": "per-case pass rate over repeats" } as const;
+const INTERVAL_LABEL = { "bonett-price": "Bonett-Price adjusted Wald interval", "percentile-bootstrap": "percentile paired bootstrap (legacy)" } as const;
+const pValueText = (value: number | null): string => value === null ? "N/A" : value < 0.001 ? "<0.001" : value.toFixed(3);
 const percent = (value: number | null): string => value === null ? "N/A" : `${(value * 100).toFixed(1)}%`;
 const points = (value: number | null): string => value === null ? "N/A" : `${value >= 0 ? "+" : ""}${(value * 100).toFixed(1)} pts`;
 
@@ -30,6 +33,7 @@ export function renderGateMarkdown(report: GateReport): string {
     `- Candidate: ${report.candidate.configuration} from ${report.candidate.source} (${report.candidate.cases} cases, ${report.candidate.runs} runs)`,
     `- Reference: ${report.reference.configuration} from ${report.reference.source} (${report.reference.cases} cases, ${report.reference.runs} runs)`,
     `- Thresholds: ${report.thresholdsVersion} dated ${report.thresholdsDate}; severity rules ${report.severityRulesVersion}; confidence ${percent(report.confidence)}`,
+    `- Analysis: ${ESTIMAND_LABEL[report.analysis.primaryEstimand]}, ${INTERVAL_LABEL[report.analysis.nonInferiorityInterval]}; statistics ${report.analysis.statsMethodsVersion}`,
     `- Scoring contract: ${report.inputs.scoringContract.version}, sha256 ${report.inputs.scoringContract.sha256 ?? "not available"}, ${report.inputs.scoringContract.matchesLock ? "matches the committed lock" : "DOES NOT MATCH the committed lock"}`,
     "",
     "## Reasons",
@@ -58,6 +62,16 @@ export function renderGateMarkdown(report: GateReport): string {
     "| Metric | Cases | Difference | Interval | Margin | Result |",
     "|---|---:|---:|---:|---:|---|",
     ...report.comparisons.map((item) => `| ${item.metric} | ${item.cases} | ${points(item.difference)} | ${item.interval === null ? "N/A" : `${points(item.interval.low)} to ${points(item.interval.high)}`} | ${points(-item.margin)} | ${item.status}: ${item.detail} |`),
+    ...(report.comparisons.some(({ secondary, pValue }) => secondary !== null || pValue !== null)
+      ? [
+        "",
+        "Reported, not gated: the p-value for no difference, and the same comparison on per-case pass rates (case-clustered Bonett-Price, a multi-run method evalstats has not yet validated). A gap between the two columns means the arms differ in how consistently they pass, not only in how often.",
+        "",
+        "| Metric | p (no difference) | Per-case rate difference | Interval | p |",
+        "|---|---:|---:|---:|---:|",
+        ...report.comparisons.map((item) => `| ${item.metric} | ${pValueText(item.pValue)} | ${item.secondary === null ? "N/A" : points(item.secondary.difference)} | ${item.secondary === null ? "N/A" : `${points(item.secondary.interval.low)} to ${points(item.secondary.interval.high)}`} | ${item.secondary === null ? "N/A" : pValueText(item.secondary.pValue)} |`),
+      ]
+      : []),
     "",
     `Minimum cases: ${report.minimumCases.observed} observed, ${report.minimumCases.required} required: ${report.minimumCases.status}.`,
     "",

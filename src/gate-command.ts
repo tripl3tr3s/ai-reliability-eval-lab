@@ -38,13 +38,14 @@ export const DEFAULT_GATE_CANDIDATE = "routed";
 export const DEFAULT_GATE_REFERENCE = "direct-sonnet";
 
 /**
- * Defaults that depend on the experiment's dataset: dataset v3 is gated with thresholds-v2 (severity rules v2,
- * 90 cases) and compares the production-mirror arm with the Sonnet 5.5 reference.
+ * Defaults that depend on the experiment's dataset: dataset v3 is gated with thresholds-v3 (severity rules v2,
+ * 90 cases, Bonett-Price on the all-pass outcome) and compares the production-mirror arm with the Sonnet 5.5
+ * reference. thresholds-v2 stays loadable with --thresholds so earlier v3 decisions replay unchanged.
  */
 export async function gateDefaultsFor(configPath: string): Promise<{ thresholdsPath: string; candidate: string; reference: string }> {
   const config = await loadExperimentConfig(configPath);
   return config.dataset.endsWith("/v3")
-    ? { thresholdsPath: "config/thresholds.v2.json", candidate: "prod-routed-5-5", reference: "direct-sonnet-5-5" }
+    ? { thresholdsPath: "config/thresholds.v3.json", candidate: "prod-routed-5-5", reference: "direct-sonnet-5-5" }
     : { thresholdsPath: "config/thresholds.v1.json", candidate: DEFAULT_GATE_CANDIDATE, reference: DEFAULT_GATE_REFERENCE };
 }
 
@@ -62,6 +63,7 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
   const referenceConfiguration = input.reference ?? (baseline ? input.candidate : (await gateDefaultsFor(input.configPath)).reference);
   if (!baseline && referenceConfiguration === input.candidate) throw new Error("Candidate and reference must differ unless a baseline file is given");
 
+  const scoringContract = input.scoringContract ?? await currentScoringContract();
   const result = evaluateGate({
     thresholds,
     cases: dataset.cases,
@@ -72,9 +74,9 @@ export async function runGate(input: GateCommandInput): Promise<{ report: GateRe
       ? { source: input.baselinePath!, configuration: referenceConfiguration, runs: baseline.runs, invalidRows: baseline.issues.length }
       : { source: input.rawPath, configuration: referenceConfiguration, runs: raw.runs, invalidRows: raw.issues.length },
     datasetIntegrityVerified: true,
+    scoringContract,
   });
   const modelIds = [...raw.runs, ...(baseline?.runs ?? [])].flatMap((run) => run.modelIds ?? []);
-  const scoringContract = input.scoringContract ?? await currentScoringContract();
   const report: GateReport = {
     ...result,
     warnings: scoringContract.matchesLock

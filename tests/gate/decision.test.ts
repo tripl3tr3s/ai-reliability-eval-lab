@@ -117,7 +117,7 @@ describe("gate decision", () => {
   });
 
   it("refuses to pass on a zero-width interval under the stricter policy", () => {
-    const strict = { ...thresholds, zeroWidthInterval: { ...thresholds.zeroWidthInterval, policy: "inconclusive" as const } };
+    const strict = { ...thresholds, zeroWidthInterval: { ...thresholds.zeroWidthInterval!, policy: "inconclusive" as const } };
     const result = gate(syntheticGrid(dataset.cases), { thresholds: strict });
     expect(result).toMatchObject({ decision: "INCONCLUSIVE", exitCode: 2, warnings: [] });
     expect(result.comparisons[0]).toMatchObject({ status: "INCONCLUSIVE", detail: expect.stringContaining("zero width") });

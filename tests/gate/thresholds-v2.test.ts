@@ -8,7 +8,7 @@ describe("thresholds-v2", () => {
   it("pins the implemented severity rules and the 90-case minimum", async () => {
     const thresholds = parseThresholds(await readFile("config/thresholds.v2.json", "utf8"));
     expect(thresholds).toMatchObject({ version: "thresholds-v2", severityRulesVersion: SEVERITY_RULES_VERSION, minimumCases: { value: 90 } });
-    for (const item of [thresholds.minimumCases, thresholds.deterministicChecks, thresholds.criticalErrors, thresholds.zeroWidthInterval, ...thresholds.nonInferiority]) {
+    for (const item of [thresholds.minimumCases, thresholds.deterministicChecks, thresholds.criticalErrors, thresholds.zeroWidthInterval!, ...thresholds.nonInferiority]) {
       expect(item.rationale.length).toBeGreaterThan(40);
     }
   });

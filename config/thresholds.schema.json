@@ -25,6 +25,45 @@
       "exclusiveMinimum": 0.5,
       "exclusiveMaximum": 1
     },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "primaryEstimand": {
+          "type": "string",
+          "enum": [
+            "all-pass",
+            "per-case-rate"
+          ]
+        },
+        "nonInferiorityInterval": {
+          "type": "string",
+          "enum": [
+            "bonett-price",
+            "percentile-bootstrap"
+          ]
+        },
+        "statsMethodsVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scoringContractVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "rationale": {
+          "type": "string",
+          "minLength": 20
+        }
+      },
+      "required": [
+        "primaryEstimand",
+        "nonInferiorityInterval",
+        "statsMethodsVersion",
+        "scoringContractVersion",
+        "rationale"
+      ],
+      "additionalProperties": false
+    },
     "bootstrap": {
       "type": "object",
       "properties": {
@@ -159,11 +198,9 @@
     "owner",
     "severityRulesVersion",
     "confidence",
-    "bootstrap",
     "minimumCases",
     "deterministicChecks",
     "criticalErrors",
-    "zeroWidthInterval",
     "nonInferiority"
   ],
   "additionalProperties": false,
