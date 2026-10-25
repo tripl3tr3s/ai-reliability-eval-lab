@@ -29,6 +29,7 @@ import { loadPricingConfig } from "./pricing.js";
 import { createProviderFromEnvironment } from "./providers/factory.js";
 import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
+import { runScorerAuditSample, runScorerAuditScore } from "./scorer-audit/command.js";
 import { currentScoringContract, SCORING_CONTRACT_LOCK_PATH, writeScoringContractLock } from "./scoring-contract.js";
 import { CompositeTelemetrySink, JsonlTelemetrySink, createLangfuseTelemetry } from "./telemetry.js";
 
@@ -88,6 +89,23 @@ export async function main(argv: readonly string[]): Promise<void> {
     const contract = await currentScoringContract();
     process.stdout.write(`Scoring contract ${contract.version} ${contract.sha256 ?? "not available"}; lock ${contract.lockedSha256 ?? "missing"}; ${contract.matchesLock ? "matches" : "DOES NOT MATCH"}\n`);
     process.exitCode = contract.matchesLock ? 0 : 1;
+    return;
+  }
+  if (parsed.command === "scorer-audit-sample") {
+    const { directory, key } = await runScorerAuditSample({
+      rawPath: parsed.rawPath,
+      configPath: parsed.configPath ?? "config/full.v3.json",
+      ...(parsed.outputPath === undefined ? {} : { outputDirectory: parsed.outputPath }),
+      ...(parsed.perStratum === undefined ? {} : { perStratum: parsed.perStratum }),
+      ...(parsed.seed === undefined ? {} : { seed: parsed.seed }),
+    });
+    process.stdout.write(`Wrote ${key.items.length} audit items from ${key.strata.length} strata to ${directory}. Give the labeler the to-label folder only; keep the key folder away from them.\n`);
+    return;
+  }
+  if (parsed.command === "scorer-audit-score") {
+    const result = await runScorerAuditScore({ keyPath: parsed.keyPath, labelsPath: parsed.labelsPath, outputDirectory: parsed.outputPath });
+    process.stdout.write(`Scored ${result.labeled} labeled items (${result.unsure} unsure, ${result.unlabeled} unlabeled) to ${parsed.outputPath}\n`);
+    for (const warning of result.warnings) process.stdout.write(`Warning: ${warning}\n`);
     return;
   }
   if (parsed.command === "mock-run") {

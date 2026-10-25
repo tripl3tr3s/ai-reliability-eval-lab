@@ -153,7 +153,7 @@ Dataset v3 adds:
 - **No lone generic words.** Every required alternative contains an amount, an identifier, a dated or numeric phrase, or only multi-word phrases. A test enforces it.
 - **`forbiddenValues`.** Stating a listed wrong figure is the critical error `wrong_value`, so a wrong number no longer looks like a missing one.
 - **`allowedExtraCalls`.** Declared read tools may be called extra times up to a count; undeclared calls and every extra write still fail.
-- **Scorer self-checks.** Each case has a reference answer that must pass and at least three counterexamples that must fail. This validates the scorer against authored answers only; agreement with human labels of live answers is still pending.
+- **Scorer self-checks.** Each case has a reference answer that must pass and at least three counterexamples that must fail. This validates the scorer against authored answers only. Agreement with human labels of live answers is measured with a blinded audit (`pnpm scorer-audit:sample`, then `pnpm scorer-audit:score`: false pass and false fail rates per arm with Wilson intervals; see [the decision record](docs/decisions/2026-10-24-scorer-audit.md)); no live run has been audited yet.
 
 ## CI and publication
 

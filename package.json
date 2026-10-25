@@ -29,6 +29,8 @@
     "mock:run": "tsx src/cli.ts mock-run",
     "report": "tsx src/cli.ts report",
     "report:replay": "vitest run tests/report-baseline.test.ts",
+    "scorer-audit:sample": "tsx src/cli.ts scorer-audit-sample",
+    "scorer-audit:score": "tsx src/cli.ts scorer-audit-score",
     "scoring-contract": "tsx src/cli.ts scoring-contract",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
