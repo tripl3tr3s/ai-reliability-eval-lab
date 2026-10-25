@@ -21,6 +21,8 @@ export const STATS_METHODS = {
   shaffer: "Shaffer step-down adjustment",
   iccOneWay: "one-way ANOVA intraclass correlation ICC(1) (multi-run, not yet validated by evalstats)",
   passPowerKUnbiased: "unbiased pass^k",
+  passAtKUnbiased: "unbiased pass@k",
+  tInterval: "Student t interval for a mean (here, the mean per-case log ratio of cost or latency)",
   percentileBootstrapLegacy: "percentile bootstrap over cases (legacy; not used for decisions at small n)",
 } as const;
 export type StatsMethodId = keyof typeof STATS_METHODS;

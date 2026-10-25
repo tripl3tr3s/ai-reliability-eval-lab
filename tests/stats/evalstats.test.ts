@@ -12,6 +12,8 @@ import {
   shafferAdjust,
   sidakConfidence,
   STATS_REFERENCE,
+  studentTQuantile,
+  tInterval,
   wilsonInterval,
   wilsonOnCaseRates,
   type CaseTally,
@@ -30,6 +32,10 @@ const fixtures = JSON.parse(await readFile("tests/stats/reference/evalstats-fixt
   bonettPriceCluster: { first: number[][]; second: number[][]; confidence: number; low: number; high: number; pValue: number }[];
   shaffer: { groups: number; pValues: number[]; adjusted: number[] }[];
   reliability: { passes: number[]; trials: number | number[]; icc: number; designEffect: number; repeatsPerCase: number; passPowerK: Record<string, number>; passAtK: Record<string, number> }[];
+  tInterval: {
+    quantiles: { probability: number; df: number; quantile: number }[];
+    intervals: { values: number[]; confidence: number; low: number; high: number }[];
+  };
 };
 
 // normalQuantile is Acklam's approximation (relative error below 1.2e-9), so every value that goes through a
@@ -116,6 +122,18 @@ describe("evalstats reference fixtures", () => {
       near(result.repeatsPerCase, repeatsPerCase, EXACT_TOLERANCE);
       for (const [k, expected] of Object.entries(passPowerK)) near(passPowerKUnbiased(tallies, Number(k))!, expected, EXACT_TOLERANCE);
       for (const [k, expected] of Object.entries(passAtK)) near(passAtKUnbiased(tallies, Number(k))!, expected, EXACT_TOLERANCE);
+    }
+  });
+
+  it("match scipy t.ppf and evalstats t_interval_ci_1d", () => {
+    expect(fixtures.tInterval.quantiles.length).toBeGreaterThan(0);
+    expect(fixtures.tInterval.intervals.length).toBeGreaterThan(0);
+    // The t quantile is found by bisection on an incomplete-beta CDF, so it is compared to 1e-10 relative.
+    for (const { probability, df, quantile } of fixtures.tInterval.quantiles) near(studentTQuantile(probability, df), quantile, 1e-10 * Math.max(1, Math.abs(quantile)));
+    for (const { values, confidence, low, high } of fixtures.tInterval.intervals) {
+      const interval = tInterval(values, confidence)!;
+      near(interval.low, low, 1e-10);
+      near(interval.high, high, 1e-10);
     }
   });
 });

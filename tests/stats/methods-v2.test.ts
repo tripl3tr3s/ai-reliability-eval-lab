@@ -18,6 +18,11 @@ import {
   STATS_METHODS_VERSION,
   wilsonInterval,
   wilsonOnCaseRates,
+  logGamma,
+  regularizedIncompleteBeta,
+  studentTCdf,
+  studentTQuantile,
+  tInterval,
   type CaseTally,
 } from "../../src/stats/index.js";
 
@@ -191,5 +196,37 @@ describe("methods registry", () => {
     expect(STATS_METHODS.bonettPriceCluster).toContain("not yet validated");
     expect(STATS_METHODS.iccOneWay).toContain("not yet validated");
     expect(STATS_METHODS.percentileBootstrapLegacy).toContain("legacy");
+  });
+});
+
+describe("Student t interval", () => {
+  it("returns no interval without spread or with fewer than two values", () => {
+    expect(tInterval([])).toBeNull();
+    expect(tInterval([0.4])).toBeNull();
+    expect(tInterval([0.2, 0.2, 0.2])).toBeNull();
+  });
+
+  it("rejects invalid input", () => {
+    expect(() => tInterval([1, 2], 1)).toThrow(RangeError);
+    expect(() => tInterval([1, Number.NaN])).toThrow(RangeError);
+    expect(() => studentTQuantile(0, 3)).toThrow(RangeError);
+    expect(() => studentTQuantile(0.5, 0)).toThrow(RangeError);
+    expect(() => regularizedIncompleteBeta(1.5, 1, 1)).toThrow(RangeError);
+    expect(() => logGamma(0)).toThrow(RangeError);
+  });
+
+  it("is symmetric and reduces to known values", () => {
+    expect(studentTQuantile(0.5, 7)).toBe(0);
+    expect(studentTQuantile(0.025, 12)).toBeCloseTo(-studentTQuantile(0.975, 12), 12);
+    expect(studentTCdf(0, 4)).toBeCloseTo(0.5, 15);
+    expect(studentTCdf(Infinity, 4)).toBe(1);
+    expect(studentTCdf(-Infinity, 4)).toBe(0);
+    // df = 1 is the Cauchy distribution: F(t) = 1/2 + atan(t) / pi.
+    expect(studentTCdf(2, 1)).toBeCloseTo(0.5 + Math.atan(2) / Math.PI, 13);
+    expect(logGamma(5)).toBeCloseTo(Math.log(24), 13);
+    expect(logGamma(0.5)).toBeCloseTo(0.5 * Math.log(Math.PI), 13);
+    expect(regularizedIncompleteBeta(0.3, 1, 1)).toBeCloseTo(0.3, 14);
+    expect(regularizedIncompleteBeta(0, 2, 3)).toBe(0);
+    expect(regularizedIncompleteBeta(1, 2, 3)).toBe(1);
   });
 });

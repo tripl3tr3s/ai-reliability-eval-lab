@@ -1,6 +1,6 @@
 # Generates tests/stats/reference/evalstats-fixtures.json, the reference values for the binary methods in
 # src/stats (Wilson, Wilson on per-case rates, Bonett-Price single-run and case-clustered, McNemar mid-p,
-# p-value by interval inversion, Sidak, Shaffer) and for ICC(1) and unbiased pass^k.
+# p-value by interval inversion, Sidak, Shaffer, Student t interval) and for ICC(1) and unbiased pass^k.
 #
 # Run from the repository root, by hand, never in CI:
 #   uv run --no-project --python 3.12 --with evalstats==0.3.3 --with numpy==2.5.4 --with scipy==1.18.1 \
@@ -18,12 +18,14 @@ from pathlib import Path
 
 import numpy as np
 import scipy
+import scipy.stats
 
 import evalstats
 from evalstats.core.paired import _p_value_by_inversion
 from evalstats.core.resampling import (
     bonett_price_paired_ci,
     bonett_price_paired_ci_multirun_cluster,
+    t_interval_ci_1d,
     wilson_ci,
     wilson_ci_1d,
 )
@@ -120,6 +122,26 @@ def shaffer_cases():
     return out
 
 
+def t_interval_cases():
+    # Log ratios of per-case cost or latency: symmetric, skewed, small n, and the 30 and 90 case sizes. The
+    # quantiles come straight from scipy, the intervals from evalstats' Student t interval.
+    out = {"quantiles": [], "intervals": []}
+    for probability, df in [(0.975, 1), (0.975, 2), (0.975, 4), (0.975, 29), (0.975, 89), (0.99, 29), (0.995, 89), (0.05, 10), (0.8, 2.5), (0.9999, 3)]:
+        out["quantiles"].append({"probability": probability, "df": df, "quantile": float(scipy.stats.t.ppf(probability, df))})
+    samples = [
+        [0.1, -0.2, 0.3, 0.05, 0.4],
+        [0.0, 1.0],
+        RNG.normal(0.1, 0.3, size=30).tolist(),
+        RNG.normal(-0.05, 0.2, size=90).tolist(),
+        np.log(RNG.lognormal(0.0, 1.0, size=30)).tolist(),
+    ]
+    for values in samples:
+        for confidence in (0.95, 0.99):
+            low, high = t_interval_ci_1d(np.array(values), 1 - confidence)
+            out["intervals"].append({"values": values, "confidence": confidence, "low": low, "high": high})
+    return out
+
+
 def icc_one_way(rows):
     # Independent textbook one-way ANOVA ICC(1) for groups of any size (not an evalstats method), with the
     # adjusted group size k0 = (N - sum n_i^2 / N) / (g - 1). Rows are lists of 0/1 run outcomes.
@@ -168,6 +190,7 @@ def main():
         "bonettPriceCluster": cluster_cases(),
         "shaffer": shaffer_cases(),
         "reliability": reliability_cases(),
+        "tInterval": t_interval_cases(),
     }
     OUTPUT.write_text(json.dumps(fixtures, indent=1) + "\n", encoding="utf-8")
     sys.stdout.write(f"Wrote {OUTPUT} with evalstats {evalstats.__version__}\n")

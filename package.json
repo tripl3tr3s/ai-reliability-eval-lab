@@ -29,6 +29,7 @@
     "mock:run": "tsx src/cli.ts mock-run",
     "report": "tsx src/cli.ts report",
     "report:replay": "vitest run tests/report-baseline.test.ts",
+    "report:mock:v3": "pnpm mock:run --config config/full.v3.json --output runs/mock/v3-report-results.jsonl && pnpm report --raw runs/mock/v3-report-results.jsonl --config config/full.v3.json --output reports/generated/mock-report-v3 && tsx src/cli.ts report-check --summary reports/generated/mock-report-v3/summary.json",
     "scoring-contract": "tsx src/cli.ts scoring-contract",
     "test": "vitest run",
     "test:coverage": "vitest run --coverage",
