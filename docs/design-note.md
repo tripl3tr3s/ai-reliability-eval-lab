@@ -80,6 +80,8 @@ Fixed choices:
 - Same inputs give the same output: the bootstrap is seeded and no wall-clock value enters the result.
 - McNemar's exact test and pass@k and pass^k appear in the report. They are descriptive and are not part of the gate decision.
 
+The report follows its own [analysis plan v2](decisions/2026-10-24-analysis-plan-v2.md) (2026-10-24): the primary outcome is every repeat passed, compared with the Bonett-Price interval and McNemar mid-p, with Sidak intervals and Shaffer-adjusted p-values when there are three or more arms. The per-case pass rate is secondary, and a sensitivity analysis drops cases with a bounded or failed run. The report describes; only the gate decides.
+
 ## 5. Threshold rationale
 
 Values live in `config/thresholds.v1.json` with a rationale per threshold. Summary:

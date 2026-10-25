@@ -27,6 +27,7 @@ import { runMockExperiment } from "./mock/run.js";
 import { runSuspensionDemo } from "./monitor/demo.js";
 import { loadPricingConfig } from "./pricing.js";
 import { createProviderFromEnvironment } from "./providers/factory.js";
+import { checkReportFile } from "./report-check.js";
 import { generateReport } from "./report-command.js";
 import { createRunSignalController } from "./run-signal.js";
 import { runScorerAuditSample, runScorerAuditScore } from "./scorer-audit/command.js";
@@ -89,6 +90,12 @@ export async function main(argv: readonly string[]): Promise<void> {
     const contract = await currentScoringContract();
     process.stdout.write(`Scoring contract ${contract.version} ${contract.sha256 ?? "not available"}; lock ${contract.lockedSha256 ?? "missing"}; ${contract.matchesLock ? "matches" : "DOES NOT MATCH"}\n`);
     process.exitCode = contract.matchesLock ? 0 : 1;
+    return;
+  }
+  if (parsed.command === "report-check") {
+    const issues = await checkReportFile(parsed.summaryPath);
+    process.stdout.write(issues.length === 0 ? `Report statistics in ${parsed.summaryPath} are complete\n` : issues.map((issue) => `${issue}\n`).join(""));
+    process.exitCode = issues.length === 0 ? 0 : 1;
     return;
   }
   if (parsed.command === "scorer-audit-sample") {

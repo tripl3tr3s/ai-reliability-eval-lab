@@ -9,11 +9,14 @@ import {
   passAtK,
   passPowerK,
   requiredPairs,
+  STATS_METHODS_VERSION,
+  STATS_REFERENCE,
   wilsonInterval,
   zeroFailureSampleSize,
   type CaseTally,
   type Interval,
   type McNemarResult,
+  type StatsMethodId,
 } from "./stats/index.js";
 
 export const STATISTICS_METRICS = ["completion", "headlineToolAccuracy", "recovery"] as const;
@@ -101,11 +104,36 @@ export interface RunStatistics {
     readonly seed: number;
     readonly alpha: number;
     readonly power: number;
+    /** Version of src/stats that produced every number in the report. */
+    readonly version: typeof STATS_METHODS_VERSION;
+    readonly reference: typeof STATS_REFERENCE;
+    readonly primaryEstimand: "all-pass";
+    /** Method used for each block of the report, by its id in STATS_METHODS. */
+    readonly intervals: Readonly<Record<string, StatsMethodId>>;
   };
   readonly arms: readonly ArmStatistics[];
   readonly comparisons: readonly PairedComparison[];
   readonly detection: DetectionLimits;
 }
+
+/** Methods behind each block of the report; the ids are listed in src/stats/methods.ts. */
+export const REPORT_METHODS: Readonly<Record<string, StatsMethodId>> = {
+  primaryArm: "wilson",
+  primaryDifference: "bonettPrice",
+  primaryTest: "mcnemarMidP",
+  simultaneousIntervals: "sidak",
+  pValueAdjustment: "shaffer",
+  secondaryArm: "wilsonOnCaseRates",
+  secondaryDifference: "bonettPriceCluster",
+  secondaryTest: "ciInversion",
+  stability: "iccOneWay",
+  passPowerK: "passPowerKUnbiased",
+  passAtK: "passAtKUnbiased",
+  efficiencyRatio: "tInterval",
+  zeroFailureBound: "clopperPearson",
+  legacyIntervals: "percentileBootstrapLegacy",
+  legacyTest: "mcnemarExact",
+};
 
 const byText = (left: string, right: string): number => (left < right ? -1 : left > right ? 1 : 0);
 const plain = ({ low, high }: Interval): Interval => ({ low, high });
@@ -205,7 +233,10 @@ export function computeRunStatistics(scores: readonly RunScore[], runs: readonly
         compare(scores, first, second, metric, seed + 50_000 + metricIndex * 1_000 + firstIndex * 100 + offset))));
   const cases = new Set(scores.map(({ caseId }) => caseId)).size;
   return {
-    method: { unitOfAnalysis: "case", confidence: CONFIDENCE, bootstrap: "percentile", resamples: DEFAULT_RESAMPLES, seed, alpha: ALPHA, power: POWER },
+    method: {
+      unitOfAnalysis: "case", confidence: CONFIDENCE, bootstrap: "percentile", resamples: DEFAULT_RESAMPLES, seed, alpha: ALPHA, power: POWER,
+      version: STATS_METHODS_VERSION, reference: STATS_REFERENCE, primaryEstimand: "all-pass", intervals: REPORT_METHODS,
+    },
     arms,
     comparisons,
     detection: {
@@ -236,12 +267,12 @@ const METRIC_LABEL: Readonly<Record<StatisticsMetric, string>> = { completion: "
 export function statisticsSections(statistics: RunStatistics): readonly ReportSection[] {
   const { detection } = statistics;
   if (statistics.arms.length === 0) return [];
-  return [
+  const [pooled, cost, paired, detect] = [
     {
-      title: "Reliability by case",
+      title: "Legacy: pooled pass rates with bootstrap intervals",
       paragraphs: [
-        `The unit of analysis is the case. Intervals are 95% percentile bootstraps that resample cases (${statistics.method.resamples} resamples, seed ${statistics.method.seed}) and keep all repeats of a case together.`,
-        "pass@k is the chance that at least one of k attempts passes, 1 - (1 - p)^k. pass^k is the chance that all k attempts pass, p^k. Both are computed per case and then averaged, with k equal to the repeats per case.",
+        `Kept for comparison with reports written before ${statistics.method.version}; the sections above decide. The unit of analysis is the case. Intervals are 95% percentile bootstraps that resample cases (${statistics.method.resamples} resamples, seed ${statistics.method.seed}) and keep all repeats of a case together; at small n they are too narrow.`,
+        "pass@k and pass^k here are plug-in estimates, 1 - (1 - p)^k and p^k per case, averaged; plug-in pass^k is biased upward. The unbiased versions are in the stability section.",
       ],
       tables: [{
         caption: "Per-configuration pass rates with case-clustered intervals",
@@ -265,10 +296,10 @@ export function statisticsSections(statistics: RunStatistics): readonly ReportSe
       }],
     },
     {
-      title: "Paired comparisons",
+      title: "Legacy: paired bootstrap comparisons",
       paragraphs: [
-        "Configurations run the same cases, so they are compared within case. The difference is the mean over cases of the per-case pass rate in the first configuration minus the second, with a paired bootstrap interval.",
-        "McNemar's exact test needs one binary outcome per case. The primary rule counts a case as passed only if every repeat passed; the majority rule is shown as a sensitivity check.",
+        "Kept for comparison with earlier reports. The difference is the mean over cases of the per-case pass rate in the first configuration minus the second, with a percentile paired bootstrap interval.",
+        "McNemar's exact test is more conservative than the mid-p used above. The every-repeat rule matches the primary outcome; the majority rule is shown as a sensitivity check.",
       ],
       tables: [{
         caption: "Paired differences between configurations",
@@ -310,5 +341,7 @@ export function statisticsSections(statistics: RunStatistics): readonly ReportSe
         },
       ],
     },
-  ];
+  ] as const;
+  // Current sections first; the legacy bootstrap sections close the report.
+  return [cost, detect, pooled, paired];
 }

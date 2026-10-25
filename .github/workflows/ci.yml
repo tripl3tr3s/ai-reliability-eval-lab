@@ -29,5 +29,6 @@ jobs:
       - run: pnpm build
       - run: pnpm benchmark:mock
       - run: pnpm report:replay
+      - run: pnpm report:mock:v3
       - run: pnpm gate:mock
       - run: pnpm gate:mock:v3

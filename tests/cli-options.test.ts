@@ -85,6 +85,8 @@ describe("CLI argument parsing", () => {
     expect(() => parseCliArguments(["audit-verify", "--log", "x", "--head", "short"])).toThrow(/sha256/u);
     expect(parseCliArguments(["suspension-demo"])).toEqual({ command: "suspension-demo" });
     expect(parseCliArguments(["scoring-contract"])).toEqual({ command: "scoring-contract", write: false });
+    expect(parseCliArguments(["report-check", "--summary", "reports/generated/x/summary.json"])).toEqual({ command: "report-check", summaryPath: "reports/generated/x/summary.json" });
+    expect(() => parseCliArguments(["report-check"])).toThrow();
     expect(parseCliArguments(["scorer-audit-sample", "--raw", "runs/raw.jsonl", "--per-stratum", "40", "--seed", "7"])).toEqual({ command: "scorer-audit-sample", rawPath: "runs/raw.jsonl", perStratum: 40, seed: 7 });
     expect(() => parseCliArguments(["scorer-audit-sample", "--raw", "runs/raw.jsonl", "--per-stratum", "0"])).toThrow();
     expect(() => parseCliArguments(["scorer-audit-sample"])).toThrow();

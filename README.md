@@ -119,7 +119,7 @@ Raw runs and append-only telemetry are written locally. Provider request IDs, AP
 
 Published output records the commit, dataset and configuration hashes, the scoring contract version and hash (`config/scoring-contract.json`; a report from a scorer that does not match the lock stays `pending`), prompt and resource versions, exact provider-returned model identifiers, repeat count, seed, Node and lockfile versions, pricing version and effective date, timestamps, token usage, and raw-result references. Dataset versions are immutable after baseline release. Corrections require a new version and manifest hash.
 
-`pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values. The same raw JSONL always produces byte-identical files: run timestamps come from the telemetry events passed with `--events`, never from the wall clock.
+`pnpm report --raw <path>` generates `summary.json`, `results.jsonl`, `report.md`, and a self-contained `index.html`. The reporter has no option for manually supplied aggregate values. The same raw JSONL always produces byte-identical files: run timestamps come from the telemetry events passed with `--events`, never from the wall clock. The statistics follow [analysis plan v2](docs/decisions/2026-10-24-analysis-plan-v2.md): the headline is the share of cases that passed every repeat, with verdicts and rank bands, a sensitivity analysis without runs that stopped early, cost per case over all runs, and a scope statement. `summary.json` records the methods version (`statistics.method.version`), and `pnpm report:mock:v3` checks that every block is present.
 
 ## Go-live gate
 
