@@ -73,6 +73,34 @@ export function binomialCdf(successes: number, trials: number, probability: numb
   return binomialMass(0, successes, trials, probability);
 }
 
+/** Exact P(X = successes) for X ~ Binomial(trials, probability). */
+export function binomialPmf(successes: number, trials: number, probability: number): number {
+  assertCounts(successes, trials);
+  if (!(probability >= 0 && probability <= 1)) throw new RangeError(`probability must be in [0, 1], received ${probability}`);
+  return binomialMass(successes, successes, trials, probability);
+}
+
+/** Round half to even, as numpy does, so totals that land on .5 round the same way as the reference. */
+export function roundHalfEven(value: number): number {
+  const floor = Math.floor(value);
+  const fraction = value - floor;
+  if (fraction > 0.5) return floor + 1;
+  if (fraction < 0.5) return floor;
+  return floor % 2 === 0 ? floor : floor + 1;
+}
+
+/**
+ * Wilson interval on per-case rates collapsed to a count ("Wilson flat" in evalstats): the rates are summed,
+ * rounded half to even, and treated as successes out of the number of cases. This is evalstats' marginal
+ * interval for binary data with repeated runs; the unit of analysis stays the case.
+ */
+export function wilsonOnCaseRates(rates: readonly number[], confidence = 0.95): Interval {
+  if (rates.length === 0) throw new RangeError("rates must contain at least one case");
+  if (rates.some((rate) => !(rate >= 0 && rate <= 1))) throw new RangeError("every rate must be in [0, 1]");
+  const total = rates.reduce((sum, rate) => sum + rate, 0);
+  return wilsonInterval(Math.min(rates.length, roundHalfEven(total)), rates.length, confidence);
+}
+
 /** Finds the root of a function that is monotone on [0, 1] by bisection. */
 function bisectUnit(isBelowRoot: (candidate: number) => boolean): number {
   let low = 0;

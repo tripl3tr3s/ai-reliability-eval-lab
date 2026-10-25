@@ -43,3 +43,66 @@ export function passPowerK(tallies: readonly CaseTally[], attempts: number): num
   if (cases.length === 0) return null;
   return cases.reduce((sum, { passes, trials }) => sum + (passes / trials) ** attempts, 0) / cases.length;
 }
+
+export interface IntraclassCorrelation {
+  /** One-way random-effects ICC(1) of the per-run outcome within a case. Can be negative. */
+  readonly icc: number;
+  /** Average repeats per case adjusted for unequal group sizes, k0 = (N - sum n_i^2 / N) / (g - 1). */
+  readonly repeatsPerCase: number;
+  /** Kish design effect 1 + (k0 - 1) * ICC: how much a run-level variance understates the case-level one. */
+  readonly designEffect: number;
+  readonly cases: number;
+  readonly runs: number;
+}
+
+/**
+ * One-way ANOVA ICC(1) for binary outcomes grouped by case:
+ * (MSB - MSW) / (MSB + (k0 - 1) * MSW). Null with fewer than two cases, no within-case degrees of
+ * freedom, or no variance at all (every run passed, or every run failed), where the ICC is undefined.
+ * A multi-run stability summary: evalstats does not yet validate interval methods built on it.
+ */
+export function iccOneWay(tallies: readonly CaseTally[]): IntraclassCorrelation | null {
+  const cases = usable(tallies);
+  const runs = cases.reduce((sum, { trials }) => sum + trials, 0);
+  if (cases.length < 2 || runs - cases.length < 1) return null;
+  const grand = cases.reduce((sum, { passes }) => sum + passes, 0) / runs;
+  const between = cases.reduce((sum, { passes, trials }) => sum + trials * (passes / trials - grand) ** 2, 0) / (cases.length - 1);
+  const within = cases.reduce((sum, { passes, trials }) => sum + passes - (passes * passes) / trials, 0) / (runs - cases.length);
+  const repeatsPerCase = (runs - cases.reduce((sum, { trials }) => sum + trials * trials, 0) / runs) / (cases.length - 1);
+  const denominator = between + (repeatsPerCase - 1) * within;
+  if (!(denominator > 0)) return null;
+  const icc = (between - within) / denominator;
+  return { icc, repeatsPerCase, designEffect: 1 + (repeatsPerCase - 1) * icc, cases: cases.length, runs };
+}
+
+/** C(passes, k) / C(trials, k) without forming large binomial coefficients. */
+const allOfKFromCase = (passes: number, trials: number, attempts: number): number => {
+  let product = 1;
+  for (let index = 0; index < attempts; index += 1) product *= (passes - index) / (trials - index);
+  return Math.max(0, product);
+};
+
+function unbiasedCases(tallies: readonly CaseTally[], attempts: number): readonly CaseTally[] | null {
+  assertAttempts(attempts);
+  const cases = usable(tallies);
+  if (cases.length === 0 || cases.some(({ trials }) => trials < attempts)) return null;
+  return cases;
+}
+
+/**
+ * Unbiased pass^k per case, C(c, k) / C(n, k) for c passes in n runs (the tau-bench estimator), averaged
+ * over cases. With k equal to the repeats it is the share of cases that passed every repeat. Null when a
+ * case has fewer runs than k. Unlike the plug-in p^k, it is not biased upward.
+ */
+export function passPowerKUnbiased(tallies: readonly CaseTally[], attempts: number): number | null {
+  const cases = unbiasedCases(tallies, attempts);
+  if (cases === null) return null;
+  return cases.reduce((sum, { passes, trials }) => sum + allOfKFromCase(passes, trials, attempts), 0) / cases.length;
+}
+
+/** Unbiased pass@k per case, 1 - C(n - c, k) / C(n, k) (Chen et al. 2021), averaged over cases. Null when a case has fewer runs than k. */
+export function passAtKUnbiased(tallies: readonly CaseTally[], attempts: number): number | null {
+  const cases = unbiasedCases(tallies, attempts);
+  if (cases === null) return null;
+  return cases.reduce((sum, { passes, trials }) => sum + 1 - allOfKFromCase(trials - passes, trials, attempts), 0) / cases.length;
+}
